@@ -1,186 +1,232 @@
-#!/usr/bin/env python3
-"""news-image-20261125 — acct1 v2 revision (Masrukhan25).
-
-Rebuilds entry.png from scratch: 48 stories, 8 regions, 3 big heroes with
-instantly-recognisable scenes (tariffs container ship, chip crash, Shenzhou-24),
-6 medium heroes, full-width map, UTC timeline, numbers strip, ALSO list,
-DATE CHECK bar. Flat vector, PIL only, deterministic, no network.
-"""
+# build.py — news-image-20261125 acct1 v3 (Masrukhan25)
+# "The World in One Day" — Wednesday 25 November 2026, 48 stories, 10 regions.
+# Flat-vector newspaper, PIL only, deterministic, no network.
+# v3 fixes vs v2 (dev 96.9%): 12 illustrated mediums (was 6), region chips +
+# fields row, small bottom-left map (was full-width), grander Tiangong hero,
+# proper UTC timeline strip, deeper DATE CHECK, big KOSPI number in hero 2.
 import os
 from PIL import Image, ImageDraw, ImageFont
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, "entry.png")
-W = H = 1024
+W, H = 1024, 1024
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "entry.png")
 
-# ---------------------------------------------------------------- palette
-CREAM = (247, 240, 220)      # paper
-PAPER = (252, 247, 233)      # panel paper
-NAVY = (31, 42, 68)          # ink / borders
-NAVY_DK = (20, 28, 48)
-RED = (176, 58, 46)          # brick red
-RED_DK = (140, 40, 32)
-TEAL = (36, 110, 110)
-GOLD = (212, 160, 60)
-SKY = (220, 233, 238)        # map sea
-LAND = (217, 196, 154)       # map land
-GRID = (185, 210, 220)       # map graticule
-MUTED = (107, 98, 80)
-GREEN = (46, 125, 70)
-INK_SOFT = (60, 60, 60)
+CREAM = (246, 240, 224)
+PAPER = (253, 251, 243)
+NAVY = (22, 35, 60)
+NAVY2 = (38, 58, 92)
+RED = (176, 58, 46)
+RED_D = (140, 40, 30)
+INK = (26, 26, 26)
+GREY = (107, 107, 107)
+TAN = (216, 201, 163)
+TAN_D = (198, 178, 132)
+GOLD = (201, 162, 39)
+GREEN = (46, 110, 70)
+BLUE = (52, 96, 150)
+TEAL = (32, 120, 118)
+ORANGE = (196, 106, 28)
+PURPLE = (104, 78, 150)
+OCHRE = (176, 138, 44)
+SKY = (168, 196, 224)
+SEA = (46, 88, 140)
 
-# ---------------------------------------------------------------- fonts
-DJ = "/usr/share/fonts/truetype/dejavu/"
-SERIF_B = DJ + "DejaVuSerif-Bold.ttf"
-SERIF = DJ + "DejaVuSerif.ttf"
-SANS = DJ + "DejaVuSans.ttf"
-SANS_B = DJ + "DejaVuSans-Bold.ttf"
-ITALIC = "/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf"
+FDIR = "/usr/share/fonts/truetype/dejavu"
+LDIR = "/usr/share/fonts/truetype/liberation"
+def F(size, bold=False, serif=False, italic=False):
+    if serif:
+        if bold and italic:
+            return ImageFont.truetype(os.path.join(LDIR, "LiberationSerif-BoldItalic.ttf"), size)
+        if bold:
+            name = "DejaVuSerif-Bold.ttf"
+        elif italic:
+            return ImageFont.truetype(os.path.join(LDIR, "LiberationSerif-Italic.ttf"), size)
+        else:
+            name = "DejaVuSerif.ttf"
+        return ImageFont.truetype(os.path.join(FDIR, name), size)
+    if bold:
+        name = "DejaVuSans-Bold.ttf"
+        return ImageFont.truetype(os.path.join(FDIR, name), size)
+    if italic:
+        return ImageFont.truetype(os.path.join(LDIR, "LiberationSans-Italic.ttf"), size)
+    return ImageFont.truetype(os.path.join(FDIR, "DejaVuSans.ttf"), size)
 
-
-def F(path, size):
-    return ImageFont.truetype(path, size)
-
-
-def fit_font(d, text, path, size, max_w, min_size=7):
-    """Largest font size (<= size) for which text fits max_w."""
-    while size > min_size:
-        f = F(path, size)
-        if d.textlength(text, font=f) <= max_w:
-            return f
-        size -= 1
-    return F(path, min_size)
-
-
-def wrap(d, text, f, max_w):
-    """Greedy word wrap; returns list of lines."""
+def wrap(d, text, font, width):
     lines, cur = [], ""
-    for w in text.split():
-        t = (cur + " " + w).strip()
-        if d.textlength(t, font=f) <= max_w:
+    for word in text.split(" "):
+        t = (cur + " " + word).strip()
+        if d.textlength(t, font=font) <= width or not cur:
             cur = t
         else:
-            if cur:
-                lines.append(cur)
-            cur = w
+            lines.append(cur)
+            cur = word
     if cur:
         lines.append(cur)
     return lines
 
+def text_h(d, text, font, width, lh):
+    return len(wrap(d, text, font, width)) * lh
 
-def draw_wrapped(d, x, y, text, f, fill, max_w, max_lines, leading):
-    """Draw wrapped text; truncate last line with ellipsis if over max_lines.
-    Returns y just below the last drawn line."""
-    lines = wrap(d, text, f, max_w)
-    if len(lines) > max_lines:
-        lines = lines[:max_lines]
-        # trim last line until it fits with an ellipsis
-        while lines and d.textlength(lines[-1] + " ...", font=f) > max_w:
-            lines[-1] = lines[-1][:-1].strip()
-        lines[-1] = lines[-1] + " ..."
+def draw_lines(d, x, y, lines, font, fill, lh, align="left", width=None):
     for ln in lines:
-        d.text((x, y), ln, font=f, fill=fill)
-        y += leading
+        if align == "center":
+            d.text((x + (width - d.textlength(ln, font=font)) / 2, y), ln,
+                   font=font, fill=fill)
+        elif align == "right":
+            d.text((x + width - d.textlength(ln, font=font), y), ln,
+                   font=font, fill=fill)
+        else:
+            d.text((x, y), ln, font=font, fill=fill)
+        y += lh
     return y
 
+def chip(d, x, y, w, h, text, bg, fg, font):
+    d.rounded_rectangle([x, y, x + w, y + h], radius=h // 2, fill=bg)
+    tw = d.textlength(text, font=font)
+    d.text((x + (w - tw) / 2, y + (h - font.size) / 2 - 1), text, font=font, fill=fg)
 
-def center(d, cx, y, text, f, fill):
-    d.text((cx - d.textlength(text, font=f) / 2, y), text, font=f, fill=fill)
+def num_badge(d, cx, cy, r, num, fill=RED):
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=fill, outline=(255, 255, 255), width=2)
+    f = F(15 if len(str(num)) < 2 else 13, bold=True)
+    t = str(num)
+    d.text((cx - d.textlength(t, font=f) / 2, cy - f.size / 2 - 1), t, font=f, fill=(255, 255, 255))
 
+def rule(d, x, y, w, color=NAVY, width=1):
+    d.line([(x, y), (x + w, y)], fill=color, width=width)
 
-# ---------------------------------------------------------------- data
-MASTHEAD = "THE WORLD IN ONE DAY"
-DATE_LINE = "WEDNESDAY 25 NOVEMBER 2026  —  48 STORIES FROM 8 REGIONS"
+# ------------------------------------------------------------------ DATA
+MASTHEAD = "Wednesday 25 November 2026"
+SUBHEAD = ("US proposes tariffs on 14 economies \u00b7 AI doubts sink Asian chip "
+           "stocks \u00b7 Pakistan's first astronaut docks at Tiangong")
+TOPBAR = ("THE WORLD IN ONE DAY \u00b7 48 STORIES \u00b7 10 REGIONS \u00b7 17 FIELDS "
+          "\u00b7 ALL FIRST REPORTED ON WEDNESDAY 25 NOVEMBER 2026")
 
-UTC_ITEMS = [
-    ("00:08", "KOSPI sidecar trips"),
-    ("00:18", "Shenzhou-24 lifts off"),
-    ("03:56", "Tiangong docking"),
-    ("06:30", "Cartagena raid frees all 30"),
-    ("15:00", "Iowa blast"),
-    (None, "USTR unveils tariffs"),
-    ("23:30", "Army all-clear, zero lead"),
+REGIONS = [
+    ("N. AMERICA", 8, NAVY), ("LATIN AMERICA", 2, TEAL), ("EUROPE", 12, BLUE),
+    ("MIDDLE EAST", 10, RED), ("N. AFRICA", 1, OCHRE),
+    ("SUB-SAHARAN AFRICA", 2, GREEN), ("SOUTH ASIA", 3, ORANGE),
+    ("EAST & SE ASIA", 5, PURPLE), ("OCEANIA", 2, (28, 96, 110)),
+    ("GLOBAL", 3, (110, 110, 110)),
 ]
+
+FIELDS = [("War", 10), ("Security", 5), ("Climate", 4), ("Crime", 3),
+          ("Disaster", 3), ("Sport", 3), ("Justice", 3), ("Diplomacy", 3),
+          ("Politics", 3), ("Markets", 2), ("Economy", 2), ("Tech", 2),
+          ("Trade", 1), ("Space", 1), ("Health", 1), ("Humanitarian", 1),
+          ("Environment", 1)]
 
 NUMBERS = [
-    ("35%", "MAX TARIFF — VIETNAM"),
-    ("-6.2%", "KOSPI — SEOUL"),
-    ("30", "HOSTAGES FREED — CARTAGENA"),
-    ("9,500", "LBS OF LEAD AZIDE — IOWA"),
+    ("35%", "MAX TARIFF \u2014 VIETNAM"),
+    ("-6.2%", "KOSPI \u2014 SEOUL"),
+    ("30", "HOSTAGES FREED \u2014 CARTAGENA"),
+    ("9,500", "LBS OF LEAD AZIDE \u2014 IOWA"),
     ("$94.61", "BRENT CRUDE, +3.5%"),
-    ("204", "RUNS OFF 53 BALLS — 28 SIXES"),
+    ("204", "RUNS OFF 53 BALLS \u2014 28 SIXES"),
 ]
 
-# Big heroes: num, headline, body, why, region, status, source, art key
+UTC_A = [("00:08", "KOSPI sidecar trips"), ("00:18", "Shenzhou-24 lifts off"),
+         ("03:56", "Tiangong docking"), ("06:30", "Cartagena raid frees all 30")]
+UTC_B = [("09:08", "KOSPI closes \u22126.2%"), ("15:00", "Iowa blast"),
+         ("USTR", "unveils tariffs"), ("23:30", "Army all-clear, zero lead")]
+
 BIG = [
     dict(num=1, art="tariffs",
          head="TRUMP UNVEILS NEW TARIFFS ON 14 ECONOMIES",
          body=("USTR proposes duties after an 8-month probe: Vietnam up to 35%, "
                "India 25%, China 20%, EU 15%. Hearings 25 Jan; not yet in force."),
          why="They replace tariffs the Supreme Court struck down.",
-         region="NORTH AMERICA", status="CONFIRMED", src="USTR / Reuters, 25 Nov"),
+         region="NORTH AMERICA", status="CONFIRMED", src="USTR / Reuters, 25 Nov",
+         place="WASHINGTON \u00b7 TRADE"),
     dict(num=2, art="chip",
          head="CHIP STOCKS CRASH: KOSPI -6.2%",
          body=("Seoul plunges below 5,000 as Samsung -9.9% and SK hynix -11.1% "
                "erase Tuesday's rally; Taiex -5%, Nikkei -2.8%. Sidecar trips at 09:08."),
-         why="AI doubts spread — then the Dow erased a 1,100-pt plunge.",
-         region="ASIA", status="CONFIRMED", src="Korea Exchange / AP, 25 Nov"),
+         why="AI doubts spread \u2014 then the Dow erased a 1,100-pt plunge.",
+         region="ASIA", status="CONFIRMED", src="Korea Exchange / AP, 25 Nov",
+         place="SEOUL \u00b7 TOKYO \u00b7 TAIPEI \u00b7 MARKETS"),
     dict(num=3, art="space",
          head="FIRST PAKISTANI ASTRONAUT REACHES TIANGONG",
          body=("Shenzhou-24 lifts off 00:18 UTC and docks 03:56 UTC with Tang Hongbo, "
-               "Wu Yi and Muhammad Zeeshan Ali — the first foreigner aboard the station."),
+               "Wu Yi and Muhammad Zeeshan Ali \u2014 the first foreigner aboard the station."),
          why="China opens Tiangong to the world on 75 years of ties.",
-         region="ASIA", status="CONFIRMED", src="Xinhua / CMSA, 25 Nov"),
+         region="ASIA", status="CONFIRMED", src="Xinhua / CMSA, 25 Nov",
+         place="JIUQUAN, CHINA \u00b7 SPACE"),
 ]
 
-# Medium heroes: num, headline, body, region, status, source, badge, art key
 MED = [
     dict(num=4, art="cartagena",
          head="CARTAGENA: ALL 30 HOSTAGES FREED",
-         body=("Police storm the Éxito store at 01:30 after a 17-hour siege; "
-               "1 captor killed, 4 arrested."),
+         body=("Police storm the \u00c9xito store at 01:30 after a 17-hour siege; "
+               "1 killed, 4 held."),
          region="AMERICAS", status="CONFIRMED", src="Reuters / AFP",
-         badge="30 FREED"),
+         badge="30 FREED", place="CARTAGENA \u00b7 WAR"),
     dict(num=5, art="refinery",
          head="HOUTHIS HIT SAUDI'S BIGGEST REFINERY",
          body=("Ras Tanura attacked; Riyadh says 4 drones downed. "
                "Brent jumps 3.5% to $94.61."),
          region="MIDDLE EAST", status="REPORTED", src="Reuters",
-         badge="BRENT $94.61"),
+         badge="BRENT $94.61", place="RAS TANURA, SAUDI ARABIA \u00b7 WAR"),
     dict(num=6, art="iowa",
          head="IOWA BLAST DONE: ZERO LEAD FOUND",
          body=("Army detonates 9,500 lbs at 09:00; two plumes rise. "
                "EPA: zero airborne lead found."),
          region="NORTH AMERICA", status="CONFIRMED", src="EPA / CNN",
-         badge="9,500 LBS"),
+         badge="9,500 LBS", place="MIDDLETOWN, IOWA \u00b7 DISASTER"),
     dict(num=7, art="cyber",
          head="US CYBER WAVE: CIA, ODNI, FINCEN HIT",
-         body=("Hackers breach an unclassified CIA–ODNI system with an AI tool; "
-               "FinCEN goes offline too."),
+         body=("Hackers breach an unclassified CIA\u2013ODNI system with an AI tool; "
+               "FinCEN goes offline."),
          region="NORTH AMERICA", status="REPORTED", src="NYT / BleepingComputer",
-         badge="4 AGENCIES"),
+         badge="4 AGENCIES", place="LANGLEY, VA \u00b7 SECURITY"),
     dict(num=8, art="satellite",
          head="NATO VOWS SPACE DEFENSE",
-         body=("After reports of a nuclear-armed 'Sputnik-S' in December, Rutte "
+         body=("After reports of a nuclear-armed 'Sputnik-S', Rutte "
                "vows to defend 'every inch'."),
-         region="EUROPE", status="REPORTED", src="NATO / NDR·WDR·SZ",
-         badge="1/3 AT RISK"),
+         region="EUROPE", status="REPORTED", src="NATO / NDR\u00b7WDR\u00b7SZ",
+         badge="1/3 AT RISK", place="BRUSSELS \u00b7 SECURITY"),
     dict(num=9, art="cricket",
          head="VAIBHAV 204 OFF 53 BALLS",
-         body=("India A star smashes the fastest List A double century vs UAE — "
-               "a world-record 28 sixes."),
+         body=("India A star smashes the fastest List A double century vs UAE: "
+               "a record 28 sixes."),
          region="ASIA / SPORT", status="CONFIRMED", src="Rising Stars Asia Cup",
-         badge="28 SIXES"),
+         badge="28 SIXES", place="UAE \u00b7 SPORT"),
+    dict(num=10, art="tanker",
+         head="FUEL-TANKER FIRE KILLS 30+ NEAR CAIRO",
+         body=("Tanker explodes on Cairo ring road; 30 dead, 21 injured."),
+         region="N. AFRICA", status="CONFIRMED", src="AP / Health Ministry",
+         badge="30 DEAD", place="GIZA, EGYPT \u00b7 DISASTER"),
+    dict(num=11, art="odesa",
+         head="RUSSIAN STRIKE ON ODESA KILLS 2",
+         body=("Strike hits cars and buildings in Odesa; 2 killed, "
+               "3 hurt, including a child."),
+         region="EUROPE", status="REPORTED", src="Reuters",
+         badge="2 KILLED", place="ODESA, UKRAINE \u00b7 WAR"),
+    dict(num=12, art="gaza",
+         head="GAZA DEATH TOLL REACHES 74,746",
+         body=("Toll at 74,746 killed and 176,234 hurt since Oct 2023; "
+               "1,679 since the ceasefire."),
+         region="MIDDLE EAST", status="REPORTED", src="WAFA / Gaza MoH",
+         badge="74,746", place="GAZA CITY \u00b7 WAR"),
+    dict(num=13, art="huawei",
+         head="HUAWEI GUILTY ON 10 OF 12 COUNTS",
+         body=("A US jury convicts Huawei on 10 of 12 counts \u2014 but clears it "
+               "of racketeering."),
+         region="N. AMERICA", status="CONFIRMED", src="SCMP / Reuters",
+         badge="10 OF 12", place="NEW YORK, US \u00b7 JUSTICE"),
+    dict(num=14, art="climate",
+         head="WORLD: 6 STRAIGHT DAYS ABOVE 2\u00b0C",
+         body=("Earth's average temperature tops 2\u00b0C above pre-industrial "
+               "for a sixth day in a row."),
+         region="GLOBAL", status="REPORTED", src="Copernicus",
+         badge="+2\u00b0C", place="WORLD \u00b7 CLIMATE"),
+    dict(num=15, art="heat",
+         head="UK HEAT DEATHS HIT RECORD 5,200+",
+         body=("Heat deaths in England pass 5,200 in 2026 \u2014 the highest "
+               "toll on record."),
+         region="EUROPE", status="CONFIRMED", src="ONS",
+         badge="5,200+", place="LONDON \u00b7 CLIMATE"),
 ]
 
-# ALSO list: (num, headline) — 39 items, numbered 10..48
 ALSO = [
-    (10, "RUSSIA ACCUSES UKRAINE OF \"TERRORISM\""),
-    (11, "DOW ERASES 1,100-PT PLUNGE, CLOSES +0.33%"),
-    (12, "CORE PCE 3.3%: HOTTER THAN EXPECTED"),
-    (13, "HUAWEI GUILTY ON 10 OF 12 COUNTS"),
-    (14, "COP31 ENDS WITHOUT A DEAL"),
-    (15, "GAZA DEATH TOLL 74,746"),
     (16, "ISRAEL KILLS HAMAS SECURITY CHIEF"),
     (17, "266 MILLION FACE ACUTE FOOD INSECURITY"),
     (18, "WHO EVACUATES DRC EBOLA STAFF"),
@@ -189,7 +235,7 @@ ALSO = [
     (21, "12,000 EVACUATED FROM MANCHESTER CONCERT"),
     (22, "ANMER HALL BREAK-IN ARRESTS"),
     (23, "GIULIANI AWARDED MEDAL OF FREEDOM"),
-    (24, "ÁBREGO GARCÍA LEAVES FOR SPAIN"),
+    (24, "\u00c1BREGO GARC\u00cdA LEAVES FOR SPAIN"),
     (25, "SENEGAL AFCON CHAMPIONS REINSTATED"),
     (26, "GUKESH HOLDS SINDAROV IN OPENER"),
     (27, "IRANIAN SINGER GETS 74 LASHES"),
@@ -199,17 +245,17 @@ ALSO = [
     (31, "LEWIS PUGH SWIMS HORMUZ, 15 KM"),
     (32, "ISRAEL: IRAN BUILDING CHEMICAL WEAPONS"),
     (33, "S. KOREA EDUCATION MINISTER RESIGNS"),
-    (34, "AUSTRALIA–SOLOMON SECURITY PACT"),
+    (34, "AUSTRALIA\u2013SOLOMON SECURITY PACT"),
     (35, "DUTCH COURT: CLIMATE TARGETS BINDING"),
-    (36, "EGYPT FUEL-TANKER FIRE KILLS 30+"),
-    (37, "INDONESIA MINE FLOOD: 9 DEAD, 17 TRAPPED"),
-    (38, "UK HEAT DEATHS HIT RECORD 5,200+"),
-    (39, "RUSSIA PASSES RECORD MILITARY BUDGET"),
-    (40, "ESTONIA MAY SHUT RAIL BORDER WITH RUSSIA"),
-    (41, "EU PLANS €50BN TECH FUND"),
-    (42, "WORLD: 6 STRAIGHT DAYS ABOVE 2°C"),
-    (43, "NVIDIA BOARD PUTS HUANG UNDER SCRUTINY"),
-    (44, "RUSSIAN STRIKE ON ODESA KILLS 2"),
+    (36, "RUSSIA ACCUSES UKRAINE OF \"TERRORISM\""),
+    (37, "DOW ERASES 1,100-PT PLUNGE, CLOSES +0.33%"),
+    (38, "CORE PCE 3.3%: HOTTER THAN EXPECTED"),
+    (39, "COP31 ENDS WITHOUT A DEAL"),
+    (40, "INDONESIA MINE FLOOD: 9 DEAD, 17 TRAPPED"),
+    (41, "RUSSIA PASSES RECORD MILITARY BUDGET"),
+    (42, "ESTONIA MAY SHUT RAIL BORDER WITH RUSSIA"),
+    (43, "EU PLANS \u20ac50BN TECH FUND"),
+    (44, "NVIDIA BOARD PUTS HUANG UNDER SCRUTINY"),
     (45, "ZELENSKY SEEKS TOUGHER US SANCTIONS"),
     (46, "IRGC: 2 TANKERS HIT MINES IN HORMUZ"),
     (47, "BLAST NEAR TANKER OFF DUBAI"),
@@ -217,720 +263,749 @@ ALSO = [
 ]
 
 DATE_CHECK = (
-    "DATE CHECK — LEFT OUT: Anthropic $2T IPO (19 Nov) · Villavicencio car bomb (23 Nov) · "
-    "Russian extradition case (5 Nov) · Missiles over Poland (20 Nov) · Tarwekamp blast (Dec 2024). "
-    "DATED INSIDE: Huawei verdict 24 Nov (reported 25 Nov in Asia) · Cartagena siege began 24 Nov 08:30 "
-    "(hero = the 25 Nov raid) · NATO vow 24 Nov (hero = 25 Nov analysis) · Merkury + Sparta II 21–22 Nov "
-    "(ALSO = 25 Nov refinery strikes)."
+    "DATE CHECK \u2014 LEFT OUT: Anthropic $2T IPO (19 Nov) \u00b7 Villavicencio car bomb (23 Nov) \u00b7 "
+    "Russian extradition case (5 Nov) \u00b7 Missiles over Poland (20 Nov) \u00b7 Tarwekamp blast (Dec 2024) \u00b7 "
+    "Miss Universe in San Juan (24 Nov, local) \u00b7 Nvidia +31.5% on Huang's return (Mon 23) \u00b7 "
+    "WHO Ebola evacuation, Akwe (Tue 24). NOT YET: Thanksgiving (Thu 26) \u00b7 Bundestag budget vote (Fri 27)."
 )
-
+DATE_INSIDE = (
+    "DATED INSIDE: Huawei verdict 24 Nov (reported 25 Nov in Asia) \u00b7 Cartagena siege began 24 Nov 08:30 "
+    "(hero = 25 Nov raid) \u00b7 NATO vow 24 Nov (hero = 25 Nov analysis) \u00b7 Odesa strike late Tue 24 Nov "
+    "(reported 25 Nov)."
+)
 FOOTER_GUARANTEE = ("Every story above happened or was first reported on "
                     "Wednesday 25 November 2026.")
-FOOTER_SOURCES = ("Sources: Reuters · CNN · AP · NOS · Sky News · IANS · Des Moines Register · "
-                  "WHO · WFP · Xinhua · USTR · EPA · Korea JoongAng Daily")
+FOOTER_SOURCES = ("Sources: Reuters \u00b7 CNN \u00b7 AP \u00b7 NOS \u00b7 Sky News \u00b7 IANS \u00b7 Des Moines Register \u00b7 "
+                  "WHO \u00b7 WFP \u00b7 Xinhua \u00b7 USTR \u00b7 EPA \u00b7 Korea JoongAng Daily")
+HERO_PLACES = ("1 Washington \u00b7 2 Seoul \u00b7 3 Jiuquan \u00b7 4 Cartagena \u00b7 5 Ras Tanura \u00b7 "
+               "6 Middletown, Iowa \u00b7 7 Langley, VA \u00b7 8 Brussels \u00b7 9 UAE")
 
-REGION_INDEX = [
-    "REGION INDEX — AMERICAS 4 · NORTH AMERICA 1, 6, 7, 11, 12, 23, 24, 43 · "
-    "EUROPE 8, 10, 21, 22, 26, 29, 35, 38, 39, 40, 41, 44, 45",
-    "ASIA 2, 3, 9, 13, 19, 28, 33, 37 · MIDDLE EAST 5, 15, 16, 20, 27, 31, 32, 46, 47, 48 · "
-    "PACIFIC 30, 34 · AFRICA 18, 25, 36 · WORLD 14, 17, 42",
-]
-HERO_PLACES = ("1 Washington · 2 Seoul · 3 Jiuquan · 4 Cartagena · 5 Ras Tanura · "
-               "6 Middletown, Iowa · 7 Langley, VA · 8 Brussels · 9 UAE")
-
-# Map dots: (num, lon, lat, is_hero). Positions nudged slightly where cities
-# collide at this scale (stylised map); labels in REGION INDEX / HERO_PLACES.
 MAP_DOTS = [
     (1, -77.0, 38.9, True), (2, 127.0, 37.5, True), (3, 99.0, 40.0, True),
     (4, -75.5, 10.4, True), (5, 49.0, 27.0, True), (6, -91.4, 40.8, True),
     (7, -83.0, 42.0, True), (8, 4.4, 50.8, True), (9, 56.0, 23.5, True),
-    (10, 20.1, 32.1, False), (11, -74.0, 40.7, False), (14, 30.7, 36.9, False),
-    (15, 34.5, 31.5, False), (18, 29.5, 1.5, False), (24, -3.7, 40.4, False),
-    (25, -17.4, 14.7, False), (26, 9.0, 44.0, False), (27, 53.0, 37.0, False),
-    (28, 90.4, 23.8, False), (30, 151.2, -33.9, False), (34, 160.0, -9.5, False),
-    (36, 29.0, 30.0, False), (38, -2.0, 52.5, False), (39, 37.6, 55.8, False),
-    (40, 24.7, 59.4, False), (43, -122.0, 37.4, False), (45, 30.5, 50.4, False),
-    (48, 39.2, 21.5, False),
+    (10, 29.0, 30.0, False), (11, 30.6, 46.5, False), (12, 34.5, 31.5, False),
+    (13, -73.5, 41.2, False), (15, -2.0, 52.5, False), (18, 29.5, 1.5, False),
+    (24, -3.7, 40.4, False), (25, -17.4, 14.7, False), (26, 9.0, 44.0, False),
+    (27, 53.0, 37.0, False), (28, 90.4, 23.8, False), (30, 151.2, -33.9, False),
+    (34, 160.0, -9.5, False), (36, 20.1, 32.1, False), (37, -74.0, 40.7, False),
+    (39, 30.7, 36.9, False), (41, 37.6, 55.8, False), (42, 24.7, 59.4, False),
+    (43, -122.0, 37.4, False), (45, 30.5, 50.4, False), (48, 39.2, 21.5, False),
 ]
 
-# Simplified continent outlines (lon, lat) — stylised flat-vector map.
-CONTINENTS = [
-    # North America
-    [(-168, 66), (-158, 58), (-152, 60), (-140, 60), (-132, 56), (-126, 50),
-     (-124, 42), (-120, 34), (-113, 29), (-108, 24), (-102, 18), (-95, 16),
-     (-90, 14), (-85, 11), (-80, 8), (-79, 9), (-77, 7), (-80, 20), (-82, 28),
-     (-80, 32), (-76, 35), (-73, 41), (-69, 44), (-64, 45), (-58, 47), (-54, 50),
-     (-58, 55), (-63, 58), (-68, 58), (-75, 62), (-82, 64), (-90, 66), (-95, 69),
-     (-105, 68), (-120, 69), (-135, 69), (-150, 70), (-162, 70), (-168, 68)],
-    # Greenland
-    [(-56, 60), (-48, 60), (-42, 61), (-38, 64), (-30, 68), (-22, 70),
-     (-24, 76), (-32, 78), (-45, 77), (-55, 74), (-58, 70), (-58, 64)],
-    # South America
-    [(-79, 9), (-77, 5), (-80, -2), (-80, -6), (-76, -12), (-71, -18),
-     (-70, -24), (-70, -30), (-71, -37), (-73, -44), (-70, -50), (-66, -55),
-     (-68, -52), (-64, -44), (-60, -38), (-56, -34), (-51, -31), (-47, -26),
-     (-41, -22), (-39, -16), (-35, -9), (-35, -6), (-40, -3), (-44, -2),
-     (-50, 0), (-53, 4), (-58, 6), (-62, 9), (-68, 11), (-72, 12), (-76, 10)],
-    # Africa
-    [(-17, 15), (-16, 21), (-14, 27), (-9, 31), (-5, 34), (0, 36), (8, 37),
-     (11, 34), (18, 32), (24, 32), (30, 31), (33, 27), (35, 22), (37, 18),
-     (40, 15), (43, 11), (48, 11), (51, 12), (46, 6), (42, 1), (40, -4),
-     (38, -10), (35, -17), (33, -25), (28, -32), (20, -35), (17, -31),
-     (14, -26), (12, -17), (12, -9), (13, -3), (9, 4), (4, 6), (-2, 5),
-     (-8, 4), (-13, 8), (-17, 12)],
-    # Eurasia
-    [(-10, 36), (-9, 38), (-9, 43), (-2, 44), (-1, 46), (-4, 48), (-1, 49),
-     (2, 51), (5, 53), (8, 55), (8, 57), (6, 58), (5, 60), (9, 62), (13, 65),
-     (18, 69), (24, 71), (30, 70), (36, 68), (42, 68), (48, 68), (54, 68),
-     (60, 69), (66, 69), (72, 71), (78, 72), (86, 74), (94, 75), (102, 76),
-     (110, 76), (118, 74), (126, 72), (134, 72), (142, 72), (150, 70),
-     (158, 69), (166, 69), (174, 66), (178, 64), (172, 60), (164, 60),
-     (158, 55), (152, 58), (146, 59), (141, 54), (140, 48), (138, 44),
-     (134, 42), (130, 38), (127, 35), (123, 38), (121, 34), (118, 29),
-     (113, 22), (108, 18), (105, 10), (103, 7), (100, 9), (97, 15), (93, 17),
-     (90, 22), (87, 21), (84, 19), (80, 15), (77, 8), (74, 13), (71, 20),
-     (67, 24), (63, 25), (59, 25), (56, 27), (52, 28), (49, 30), (46, 30),
-     (42, 29), (39, 28), (36, 30), (33, 31), (30, 36), (27, 36), (23, 37),
-     (20, 39), (17, 42), (14, 44), (11, 44), (7, 44), (3, 43), (0, 40),
-     (-2, 37), (-6, 36), (-9, 37)],
-    # United Kingdom
-    [(-5, 50), (-3, 53), (-5, 56), (-3, 58), (-1, 57), (0, 54), (0, 51), (-2, 50)],
-    # Japan
-    [(130, 31), (132, 33), (135, 34), (137, 35), (139, 37), (140, 39),
-     (141, 41), (142, 44), (144, 44), (141, 42), (139, 38), (136, 35),
-     (133, 34), (130, 32)],
-    # Indonesia (island chain, simplified)
-    [(95, 5), (98, 3), (100, 0), (103, -2), (105, -4), (107, -6), (110, -7),
-     (113, -8), (116, -9), (119, -9), (122, -10), (125, -9), (128, -8),
-     (131, -6), (134, -4), (137, -2), (140, -3), (141, -5), (139, -7),
-     (136, -7), (133, -5), (130, -2), (127, 0), (124, 1), (121, 0), (118, 1),
-     (115, 0), (112, -1), (109, -4), (106, -6), (103, -4), (100, -1),
-     (97, 2), (95, 4)],
-    # Borneo
-    [(109, 1), (111, 3), (113, 5), (116, 6), (118, 2), (117, -2), (114, -3),
-     (111, -2), (109, 0)],
-    # New Guinea
-    [(131, -1), (134, -2), (137, -3), (140, -4), (143, -6), (146, -7),
-     (149, -9), (147, -8), (144, -6), (141, -4), (138, -3), (135, -2), (132, -1)],
-    # Australia
-    [(113, -22), (114, -28), (115, -33), (118, -35), (124, -33), (129, -32),
-     (132, -32), (135, -35), (138, -35), (140, -38), (145, -38), (150, -37),
-     (153, -32), (153, -27), (150, -23), (146, -19), (142, -15), (142, -11),
-     (140, -16), (136, -15), (135, -12), (132, -12), (130, -13), (127, -14),
-     (124, -15), (122, -17), (120, -20), (117, -20), (114, -21)],
-    # New Zealand
-    [(167, -45), (170, -42), (173, -40), (175, -38), (177, -38), (175, -40),
-     (172, -43), (169, -46)],
-    # Madagascar
-    [(44, -16), (47, -15), (50, -16), (49, -20), (47, -24), (45, -25),
-     (43, -21), (43, -18)],
-    # Iceland
-    [(-22, 64), (-18, 63), (-14, 64), (-16, 66), (-20, 66), (-23, 65)],
-    # Sri Lanka
-    [(80, 6), (81, 8), (80, 9)],
-    # Taiwan
-    [(120, 22), (121, 25), (120, 25)],
-    # Philippines
-    [(120, 18), (122, 17), (122, 14), (121, 11), (123, 10), (124, 12), (122, 16)],
-    # Cuba
-    [(-85, 22), (-80, 23), (-75, 20), (-74, 20), (-77, 21), (-82, 22)],
-]
+# ------------------------------------------------------------------ ART
+# Every art function draws on its own RGBA panel (w x h) and returns it,
+# so nothing can ever cross a panel edge.
 
-# ---------------------------------------------------------------- art helpers
-def layer(w, h):
-    return Image.new("RGBA", (w, h), (0, 0, 0, 0))
+def panel(w, h, bg):
+    im = Image.new("RGBA", (w, h), bg + (255,))
+    return im, ImageDraw.Draw(im)
 
-
-def stars(d, w, h, n=26, seed=7):
-    """Deterministic star field (no random module)."""
-    pts = []
-    x, y = seed, seed * 3 + 1
-    for _ in range(n):
-        x = (x * 1103515245 + 12345) % 2147483648
-        y = (y * 1103515245 + 12345) % 2147483648
-        pts.append((x % w, y % h, 1 + (x // 997) % 2))
-    for sx, sy, r in pts:
-        d.ellipse([sx - r, sy - r, sx + r, sy + r], fill=(255, 255, 255, 220))
-
-
-def flame(d, cx, base_y, w, h, col1=(255, 180, 40), col2=(230, 80, 30)):
-    """Teardrop flame: outer + inner, pointing up."""
-    d.polygon([(cx - w / 2, base_y), (cx - w * 0.42, base_y - h * 0.55),
-               (cx - w * 0.12, base_y - h * 0.85), (cx, base_y - h),
-               (cx + w * 0.15, base_y - h * 0.7), (cx + w * 0.42, base_y - h * 0.4),
-               (cx + w / 2, base_y)], fill=col2 + (255,))
-    d.polygon([(cx - w * 0.28, base_y), (cx - w * 0.2, base_y - h * 0.45),
-               (cx, base_y - h * 0.7), (cx + w * 0.22, base_y - h * 0.35),
-               (cx + w * 0.28, base_y)], fill=col1 + (255,))
-
-
-def puff(d, cx, cy, r, col):
-    """Round smoke/explosion puff: cluster of overlapping circles."""
-    for dx, dy, rr in [(-0.7, 0.25, 0.62), (0, -0.25, 0.8), (0.65, 0.2, 0.6),
-                       (-0.3, -0.55, 0.55), (0.35, -0.5, 0.5), (0, 0.35, 0.7)]:
-        d.ellipse([cx + dx * r - rr * r, cy + dy * r - rr * r,
-                   cx + dx * r + rr * r, cy + dy * r + rr * r], fill=col + (255,))
-
-
-# ---------------------------------------------------------------- hero art
 def art_tariffs(w, h):
-    """Big container ship + red tariff stamp."""
-    im = layer(w, h)
-    d = ImageDraw.Draw(im)
-    d.rectangle([0, 0, w, h * 0.62], fill=(214, 230, 236, 255))          # sky
-    d.rectangle([0, h * 0.62, w, h], fill=(28, 52, 88, 255))             # sea
-    for i in range(3):                                                    # waves
-        y = int(h * 0.70 + i * h * 0.09)
-        d.arc([10, y - 6, w - 10, y + 14], 200, 340, fill=(120, 160, 190, 255), width=2)
-    d.ellipse([w * 0.04, h * 0.05, w * 0.15, h * 0.17], fill=(255, 224, 130, 255))  # sun
+    im, d = panel(w, h, (168, 196, 224))
+    # sky + sea
+    d.rectangle([0, 0, w, int(h * 0.62)], fill=(168, 196, 224, 255))
+    d.rectangle([0, int(h * 0.62), w, h], fill=(46, 88, 140, 255))
+    d.rectangle([0, int(h * 0.62), w, int(h * 0.62) + 3], fill=(255, 255, 255, 255))
+    # sun + clouds
+    d.ellipse([w - 58, 8, w - 30, 36], fill=(245, 220, 130, 255))
+    d.ellipse([14, 10, 52, 22], fill=(255, 255, 255, 255))
+    d.ellipse([34, 6, 66, 18], fill=(255, 255, 255, 255))
     # ship hull
-    hx0, hx1, hy = int(w * 0.06), int(w * 0.94), int(h * 0.60)
-    d.polygon([(hx0, hy - 14), (hx1, hy - 14), (hx1 - 18, hy + 22),
-               (hx0 + 26, hy + 22)], fill=(150, 40, 34, 255))
-    d.rectangle([hx0, hy - 16, hx1, hy - 12], fill=(31, 42, 68, 255))
-    # containers: 3 rows x 5
-    cont_cols = [(176, 58, 46), (36, 110, 110), (212, 160, 60),
-                 (52, 96, 160), (46, 125, 70)]
-    cw, ch = (hx1 - hx0 - 70) / 5, 13
+    hy = int(h * 0.62)
+    d.polygon([(8, hy - 6), (w - 8, hy - 6), (w - 26, hy + 16), (30, hy + 16)],
+              fill=(30, 30, 34, 255))
+    d.rectangle([8, hy - 10, w - 8, hy - 5], fill=(176, 58, 46, 255))
+    # containers: 3 rows x 8 cols
+    cols = [(176, 58, 46), (52, 96, 150), (46, 110, 70), (201, 162, 39),
+            (104, 78, 150), (196, 106, 28), (32, 120, 118), (140, 40, 30)]
+    cw, ch = 30, 13
+    x0, y0 = 16, hy - 52
     for r in range(3):
-        for c in range(5):
-            x0 = hx0 + 34 + c * cw
-            y0 = hy - 18 - (r + 1) * ch
-            d.rectangle([x0 + 1, y0 + 1, x0 + cw - 1, y0 + ch - 1],
-                        fill=cont_cols[(c + r) % 5] + (255,))
-            d.line([x0 + 1, y0 + ch / 2, x0 + cw - 1, y0 + ch / 2],
-                   fill=(255, 255, 255, 90), width=1)
+        for c in range(8):
+            x = x0 + c * (cw + 2)
+            y = y0 + r * (ch + 2)
+            d.rectangle([x, y, x + cw, y + ch], fill=cols[(r * 3 + c) % 8] + (255,))
+            d.line([(x + 6, y), (x + 6, y + ch)], fill=(255, 255, 255, 90), width=1)
     # bridge tower + funnel
-    d.rectangle([hx1 - 58, hy - 62, hx1 - 26, hy - 16], fill=(240, 240, 235, 255))
+    d.rectangle([w - 62, 4, w - 34, 21], fill=(245, 245, 240, 255))
     for i in range(3):
-        d.rectangle([hx1 - 54, hy - 58 + i * 12, hx1 - 30, hy - 50 + i * 12],
-                    fill=(31, 42, 68, 255))
-    d.rectangle([hx0 + 8, hy - 44, hx0 + 26, hy - 16], fill=(31, 42, 68, 255))
-    # red stamp (drawn on own layer, rotated) — small enough to sit fully
-    # inside the panel, with a light fill so it reads over the cargo
-    st = layer(120, 120)
-    sd = ImageDraw.Draw(st)
-    cx = cy = 60
-    sd.ellipse([cx - 50, cy - 50, cx + 50, cy + 50],
-               fill=(252, 247, 233, 215), outline=(176, 58, 46, 255), width=5)
-    sd.ellipse([cx - 41, cy - 41, cx + 41, cy + 41], outline=(176, 58, 46, 255), width=2)
-    f1 = F(SANS_B, 24)
-    f2 = F(SANS_B, 13)
-    center(sd, cx, cy - 26, "UP TO", f2, (176, 58, 46, 255))
-    center(sd, cx, cy - 8, "35%", f1, (176, 58, 46, 255))
-    center(sd, cx, cy + 22, "TARIFF", f2, (176, 58, 46, 255))
-    st = st.rotate(-14, resample=Image.BICUBIC, center=(cx, cy))
-    im.alpha_composite(st, (w - 124, 0))
+        d.rectangle([w - 58, 7 + i * 5, w - 38, 10 + i * 5],
+                    fill=(38, 58, 92, 255))
+    d.rectangle([w - 96, 8, w - 80, 21], fill=(176, 58, 46, 255))
+    # tariff table strip inside the panel (data in the drawing)
+    ty = h - 26
+    d.rectangle([0, ty, w, h], fill=(253, 251, 243, 255))
+    d.line([(0, ty), (w, ty)], fill=NAVY + (255,), width=1)
+    f = F(9, bold=True)
+    txt = "CHINA 20%  \u00b7  INDIA 25%  \u00b7  EU 15%  \u00b7  VIETNAM 35%"
+    d.text(((w - d.textlength(txt, font=f)) / 2, ty + 7), txt, font=f, fill=NAVY)
+    # red stamp, top right
+    cx, cy, r = w - 52, 52, 34
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(253, 251, 243, 235),
+              outline=RED + (255,), width=3)
+    d.ellipse([cx - r + 5, cy - r + 5, cx + r - 5, cy + r - 5],
+              outline=RED + (255,), width=1)
+    f1, f2 = F(11, bold=True), F(20, bold=True)
+    d.text((cx - d.textlength("UP TO", font=f1) / 2, cy - 20), "UP TO",
+           font=f1, fill=RED)
+    d.text((cx - d.textlength("35%", font=f2) / 2, cy - 8), "35%",
+           font=f2, fill=RED)
     return im
-
 
 def art_chip(w, h):
-    """AI chip falling over a plunging red chart."""
-    im = layer(w, h)
-    d = ImageDraw.Draw(im)
-    d.rectangle([0, 0, w, h], fill=(238, 236, 228, 255))
-    # chart grid
-    for i in range(1, 5):
-        y = int(h * i / 5)
-        d.line([0, y, w, y], fill=(200, 200, 190, 255), width=1)
-    # plunging red line with arrowhead
-    pts = [(8, 14), (70, 22), (130, 34), (185, 58), (240, 88), (300, 118)]
-    d.line(pts, fill=(176, 58, 46, 255), width=5, joint="curve")
-    d.polygon([(300, 118), (282, 108), (286, 124)], fill=(176, 58, 46, 255))
-    d.line([(8, 14), (8, 118)], fill=(120, 120, 115, 255), width=1)
-    # chip (own layer, rotated)
-    ch = layer(120, 120)
-    cd = ImageDraw.Draw(ch)
-    cd.rectangle([28, 28, 92, 92], fill=(31, 42, 68, 255),
-                 outline=(212, 160, 60, 255), width=3)
-    for i in range(4):  # pins
-        for j in range(3):
-            cd.rectangle([28 + j * 22, 18, 34 + j * 22, 28], fill=(212, 160, 60, 255))
-            cd.rectangle([28 + j * 22, 92, 34 + j * 22, 102], fill=(212, 160, 60, 255))
-            cd.rectangle([18, 28 + j * 22, 28, 34 + j * 22], fill=(212, 160, 60, 255))
-            cd.rectangle([92, 28 + j * 22, 102, 34 + j * 22], fill=(212, 160, 60, 255))
-    f = F(SANS_B, 26)
-    center(cd, 60, 44, "AI", f, (255, 255, 255, 255))
-    ch = ch.rotate(-16, resample=Image.BICUBIC, center=(60, 60))
-    im.alpha_composite(ch, (int(w * 0.30), int(h * 0.18)))
-    # big red number + small labels
-    f_big = F(SANS_B, 34)
-    d.text((w * 0.60, h * 0.06), "-6.2%", font=f_big, fill=(176, 58, 46, 255))
-    f_s = F(SANS_B, 11)
-    d.rectangle([8, h - 24, 148, h - 6], fill=(31, 42, 68, 255))
-    d.text((13, h - 22), "SAMSUNG -9.9%", font=f_s, fill=(255, 255, 255, 255))
-    d.rectangle([156, h - 24, 296, h - 6], fill=(31, 42, 68, 255))
-    d.text((161, h - 22), "SK HYNIX -11.1%", font=f_s, fill=(255, 255, 255, 255))
+    im, d = panel(w, h, (22, 35, 60))
+    # grid
+    for gx in range(0, w, 26):
+        d.line([(gx, 0), (gx, h)], fill=(255, 255, 255, 22), width=1)
+    for gy in range(0, h, 20):
+        d.line([(0, gy), (w, gy)], fill=(255, 255, 255, 22), width=1)
+    # falling red line chart (upper zone only, clear of the number strip)
+    pts = [(10, 12), (52, 20), (96, 18), (140, 30), (184, 38), (228, 48),
+           (272, 56), (308, 62)]
+    d.line(pts, fill=(224, 70, 52, 255), width=4)
+    for p in pts:
+        d.ellipse([p[0] - 3, p[1] - 3, p[0] + 3, p[1] + 3], fill=(255, 255, 255, 255))
+    d.polygon([(308, 62), (296, 55), (300, 66)], fill=(224, 70, 52, 255))
+    # AI chip graphic, bottom left
+    cx0, cy0 = 14, 62
+    d.rectangle([cx0 + 8, cy0 + 8, cx0 + 44, cy0 + 44], fill=(16, 24, 44, 255),
+                outline=(201, 162, 39, 255), width=2)
+    for i in range(4):
+        d.line([(cx0 + 14 + i * 9, cy0), (cx0 + 14 + i * 9, cy0 + 8)],
+               fill=(201, 162, 39, 255), width=2)
+        d.line([(cx0 + 14 + i * 9, cy0 + 44), (cx0 + 14 + i * 9, cy0 + 52)],
+               fill=(201, 162, 39, 255), width=2)
+        d.line([(cx0, cy0 + 14 + i * 9), (cx0 + 8, cy0 + 14 + i * 9)],
+               fill=(201, 162, 39, 255), width=2)
+        d.line([(cx0 + 44, cy0 + 14 + i * 9), (cx0 + 52, cy0 + 14 + i * 9)],
+               fill=(201, 162, 39, 255), width=2)
+    f = F(14, bold=True)
+    d.text((cx0 + 26 - d.textlength("AI", font=f) / 2, cy0 + 18), "AI",
+           font=f, fill=(255, 255, 255))
+    # big KOSPI number
+    fbig = F(26, bold=True)
+    d.text((76, 66), "4,697.51", font=fbig, fill=(255, 255, 255))
+    f2 = F(8, bold=True)
+    lab = "KOSPI \u22126.2%  \u00b7  SK HYNIX \u221211.1%  \u00b7  SAMSUNG \u22129.9%"
+    d.text((76, 102), lab, font=f2, fill=(224, 70, 52))
     return im
-
 
 def art_space(w, h):
-    """Rocket + Tiangong station above Earth's curve."""
-    im = layer(w, h)
-    d = ImageDraw.Draw(im)
-    d.rectangle([0, 0, w, h], fill=(16, 24, 48, 255))                    # night sky
-    stars(d, w, int(h * 0.75), n=30)
+    im, d = panel(w, h, (16, 24, 44))
+    # stars
+    import random
+    rnd = random.Random(25)
+    for _ in range(60):
+        x, y = rnd.randint(2, w - 2), rnd.randint(2, int(h * 0.7))
+        r = rnd.choice([1, 1, 2])
+        d.ellipse([x - r, y - r, x + r, y + r], fill=(255, 255, 255, 200))
     # Earth curve at bottom
-    d.ellipse([-w * 0.25, h * 0.78, w * 1.25, h * 1.75], fill=(52, 96, 160, 255))
-    d.ellipse([w * 0.08, h * 0.86, w * 0.38, h * 1.05], fill=(70, 140, 90, 255))
-    d.ellipse([w * 0.55, h * 0.92, w * 0.85, h * 1.08], fill=(70, 140, 90, 255))
-    d.arc([-w * 0.25, h * 0.78, w * 1.25, h * 1.75], 180, 360,
-          fill=(140, 200, 240, 255), width=3)
-    d.ellipse([w * 0.62, h * 0.84, w * 0.78, h * 0.90], fill=(255, 255, 255, 220))
-    d.ellipse([w * 0.18, h * 0.90, w * 0.30, h * 0.95], fill=(255, 255, 255, 200))
-    # Tiangong station (upper right): core + 2 solar wings
-    sx, sy = int(w * 0.62), int(h * 0.30)
-    d.rectangle([sx - 52, sy - 8, sx - 8, sy + 8], fill=(40, 80, 160, 255))   # left wing
-    d.rectangle([sx + 8, sy - 8, sx + 52, sy + 8], fill=(40, 80, 160, 255))  # right wing
-    for x in range(sx - 52, sx + 52, 11):
-        d.line([x, sy - 8, x, sy + 8], fill=(140, 180, 230, 255), width=1)
-    d.rectangle([sx - 10, sy - 12, sx + 34, sy + 12], fill=(200, 200, 195, 255))
-    d.rectangle([sx + 34, sy - 7, sx + 52, sy + 7], fill=(170, 170, 165, 255))
-    d.text((sx - 8, sy - 11), "TIANGONG", font=F(SANS_B, 8),
-           fill=(31, 42, 68, 255))
-    # rocket (left, ascending diagonally)
-    rx, ry = int(w * 0.30), int(h * 0.42)
-    rk = layer(90, 130)
-    rd = ImageDraw.Draw(rk)
-    rd.polygon([(45, 2), (58, 26), (58, 96), (45, 108), (32, 96), (32, 26)],
-               fill=(245, 245, 240, 255), outline=(31, 42, 68, 255))
-    rd.polygon([(45, 2), (58, 26), (32, 26)], fill=(176, 58, 46, 255))
-    rd.rectangle([32, 58, 58, 70], fill=(176, 58, 46, 255))
-    rd.ellipse([39, 32, 51, 44], fill=(140, 200, 240, 255),
-               outline=(31, 42, 68, 255))
-    flame(rd, 45, 128, 26, 26)
-    rk = rk.rotate(24, resample=Image.BICUBIC, center=(45, 60))
-    im.alpha_composite(rk, (rx - 45, ry - 60))
-    # small Pakistani flag on the capsule label (kept inside the panel)
-    fx, fy = int(w * 0.52), int(h * 0.52)
-    d.rectangle([fx, fy, fx + 26, fy + 16], fill=(20, 90, 50, 255))
-    d.ellipse([fx + 8, fy + 3, fx + 18, fy + 13], fill=(255, 255, 255, 255))
-    d.ellipse([fx + 10, fy + 4, fx + 18, fy + 12], fill=(20, 90, 50, 255))
-    d.text((fx + 30, fy + 2), "1ST PAKISTANI", font=F(SANS_B, 9),
-           fill=(255, 255, 255, 255))
+    d.ellipse([-w * 0.4, int(h * 0.78), w * 1.4, int(h * 1.9)], fill=(46, 88, 140, 255))
+    d.ellipse([-w * 0.4, int(h * 0.78), w * 1.4, int(h * 0.86)],
+              fill=(120, 180, 230, 255))
+    d.ellipse([int(w * 0.1), int(h * 0.86), int(w * 0.34), int(h * 0.97)],
+              fill=(46, 110, 70, 255))
+    d.ellipse([int(w * 0.62), int(h * 0.88), int(w * 0.86), int(h * 0.98)],
+              fill=(46, 110, 70, 255))
+    # dotted trajectory
+    for i in range(12):
+        t = i / 11.0
+        x = int(70 + t * 150)
+        y = int(88 - t * 46 + t * t * 18)
+        d.ellipse([x - 2, y - 2, x + 2, y + 2], fill=(255, 255, 255, 220))
+    # rocket, big, centre-left, ascending
+    rx, ry = 78, 58
+    d.polygon([(rx, ry - 26), (rx + 9, ry - 8), (rx + 9, ry + 12), (rx, ry + 20),
+               (rx - 9, ry + 12), (rx - 9, ry - 8)], fill=(245, 245, 240, 255))
+    d.ellipse([rx - 9, ry - 30, rx + 9, ry - 12], fill=(176, 58, 46, 255))
+    d.polygon([(rx - 9, ry + 8), (rx - 20, ry + 22), (rx - 9, ry + 18)],
+              fill=(176, 58, 46, 255))
+    d.polygon([(rx + 9, ry + 8), (rx + 20, ry + 22), (rx + 9, ry + 18)],
+              fill=(176, 58, 46, 255))
+    d.polygon([(rx - 5, ry + 18), (rx + 5, ry + 18), (rx + 2, ry + 34),
+               (rx - 2, ry + 34)], fill=(245, 160, 40, 255))
+    d.ellipse([rx - 12, ry + 32, rx + 12, ry + 46], fill=(245, 200, 90, 160))
+    # Tiangong station, large, right
+    sx, sy = w - 78, 44
+    d.rectangle([sx - 8, sy - 6, sx + 8, sy + 26], fill=(220, 225, 232, 255))
+    d.rectangle([sx - 8, sy - 6, sx + 8, sy + 2], fill=(176, 58, 46, 255))
+    d.ellipse([sx - 8, sy + 26, sx + 8, sy + 34], fill=(200, 205, 212, 255))
+    # solar wings
+    for sgn in (-1, 1):
+        x0 = sx + sgn * 10 if sgn > 0 else sx - 66
+        d.rectangle([x0, sy + 2, x0 + 56, sy + 20], fill=(52, 96, 150, 255),
+                    outline=(255, 255, 255, 255), width=1)
+        for i in range(1, 4):
+            d.line([(x0 + i * 14, sy + 2), (x0 + i * 14, sy + 20)],
+                   fill=(255, 255, 255, 160), width=1)
+    # flags
+    d.rectangle([sx - 40, sy + 40, sx - 16, sy + 54], fill=(20, 110, 60, 255))
+    d.ellipse([sx - 37, sy + 42, sx - 29, sy + 50], fill=(255, 255, 255, 255))
+    d.ellipse([sx - 34, sy + 44, sx - 28, sy + 50], fill=(20, 110, 60, 255))
+    d.rectangle([sx - 12, sy + 40, sx + 12, sy + 54], fill=(176, 58, 46, 255))
+    for fx, fy in [(sx - 8, sy + 44), (sx - 2, sy + 42), (sx + 4, sy + 46)]:
+        d.ellipse([fx - 1, fy - 1, fx + 1, fy + 1], fill=(245, 220, 130, 255))
+    # labels (clear of the number badge top-left and CONFIRMED chip top-right)
+    f = F(11, bold=True)
+    d.text((36, 8), "SHENZHOU-24", font=f, fill=(255, 255, 255))
+    d.text((w - 8 - d.textlength("TIANGONG", font=f), 26), "TIANGONG",
+           font=f, fill=(255, 255, 255))
+    f2 = F(10, bold=True)
+    d.text((10, h - 20), "1ST PAKISTANI ASTRONAUT", font=f2, fill=(255, 255, 255))
     return im
-
 
 def art_cartagena(w, h):
-    """Supermarket storefront + police cordon."""
-    im = layer(w, h)
-    d = ImageDraw.Draw(im)
-    d.rectangle([0, 0, w, h], fill=(232, 222, 196, 255))
-    # storefront
-    d.rectangle([8, 26, w - 8, h - 26], fill=(240, 235, 220, 255),
-                outline=(31, 42, 68, 255), width=2)
-    # solid red fascia with the shop name (readable), awning stripes below
-    d.rectangle([10, 28, w - 10, 44], fill=(176, 58, 46, 255))
-    d.text((14, 30), "ÉXITO", font=F(SANS_B, 13), fill=(255, 255, 255, 255))
-    for i in range(6):
-        col = (176, 58, 46, 255) if i % 2 == 0 else (245, 245, 240, 255)
-        x0 = 10 + i * (w - 20) / 6
-        d.polygon([(x0, 46), (x0 + (w - 20) / 6, 46),
-                   (x0 + (w - 20) / 6, 58), (x0, 58)], fill=col)
-    # glass doors + windows
-    d.rectangle([16, 64, 62, h - 30], fill=(140, 190, 210, 255),
-                outline=(31, 42, 68, 255))
-    d.rectangle([70, 64, 116, h - 30], fill=(160, 200, 215, 255),
-                outline=(31, 42, 68, 255))
-    d.line([39, 64, 39, h - 30], fill=(31, 42, 68, 255), width=2)
-    d.line([93, 64, 93, h - 30], fill=(31, 42, 68, 255), width=2)
-    # police car
-    d.rectangle([w - 62, h - 40, w - 10, h - 24], fill=(31, 42, 68, 255))
-    d.polygon([(w - 56, h - 40), (w - 48, h - 52), (w - 28, h - 52),
-               (w - 18, h - 40)], fill=(31, 42, 68, 255))
-    d.ellipse([w - 56, h - 26, w - 46, h - 16], fill=(20, 20, 20, 255))
-    d.ellipse([w - 24, h - 26, w - 14, h - 16], fill=(20, 20, 20, 255))
-    d.rectangle([w - 44, h - 56, w - 34, h - 50], fill=(200, 40, 40, 255))
-    # police tape across the front
-    d.rectangle([6, h - 22, w - 6, h - 12], fill=(240, 200, 40, 255))
-    for x in range(8, w - 8, 14):
-        d.polygon([(x, h - 22), (x + 7, h - 22), (x + 2, h - 12), (x - 5, h - 12)],
-                  fill=(31, 42, 68, 255))
+    im, d = panel(w, h, (240, 230, 205))
+    d.rectangle([0, 0, w, 22], fill=(176, 58, 46, 255))
+    f = F(12, bold=True)
+    t = "\u00c9XITO"
+    d.text(((w - d.textlength(t, font=f)) / 2, 4), t, font=f, fill=(255, 255, 255))
+    d.rectangle([0, 22, w, 28], fill=(245, 245, 240, 255))
+    # shopfront windows + door
+    d.rectangle([8, 32, 62, h - 10], fill=(120, 160, 200, 255))
+    d.rectangle([70, 32, 112, h - 10], fill=(90, 130, 175, 255))
+    d.rectangle([120, 32, w - 8, h - 10], fill=(60, 90, 130, 255))
+    d.line([(35, 32), (35, h - 10)], fill=(255, 255, 255, 200), width=2)
+    # figures (police) silhouettes
+    for fx in (30, 78, 130):
+        d.ellipse([fx - 4, 36, fx + 4, 44], fill=(26, 26, 26, 255))
+        d.rectangle([fx - 5, 44, fx + 5, h - 12], fill=(26, 26, 26, 255))
+    # police tape
+    d.polygon([(0, h - 12), (w, h - 16), (w, h - 6), (0, h - 2)],
+              fill=(245, 200, 40, 255))
+    for i in range(0, w, 14):
+        d.line([(i, h - 12), (i + 7, h - 6)], fill=(26, 26, 26, 255), width=2)
     return im
-
-
-def art_iowa(w, h):
-    """Real explosion cloud over farmland + dust plume."""
-    im = layer(w, h)
-    d = ImageDraw.Draw(im)
-    d.rectangle([0, 0, w, h * 0.55], fill=(214, 228, 236, 255))           # sky
-    d.ellipse([w * 0.78, h * 0.06, w * 0.92, h * 0.20], fill=(255, 240, 180, 255))
-    # farmland
-    d.rectangle([0, h * 0.55, w, h], fill=(120, 150, 80, 255))
-    d.polygon([(0, h * 0.55), (w, h * 0.55), (w, h * 0.72), (0, h * 0.72)],
-              fill=(150, 120, 70, 255))
-    d.rectangle([0, h * 0.72, w, h], fill=(110, 140, 75, 255))
-    for i in range(5):  # field rows
-        y = int(h * (0.76 + i * 0.05))
-        d.line([0, y, w, y], fill=(90, 115, 60, 255), width=1)
-    # barn + silo (left)
-    d.rectangle([8, h * 0.58, 34, h * 0.74], fill=(150, 50, 40, 255))
-    d.polygon([(6, h * 0.58), (21, h * 0.50), (36, h * 0.58)], fill=(90, 30, 25, 255))
-    d.ellipse([38, h * 0.52, 50, h * 0.74], fill=(180, 180, 175, 255))
-    d.ellipse([38, h * 0.52, 50, h * 0.58], fill=(140, 140, 135, 255))
-    # explosion: bright core + orange shell + grey smoke base
-    cx, cy = int(w * 0.58), int(h * 0.34)
-    puff(d, cx, cy + 6, 34, (120, 120, 115))                              # smoke
-    puff(d, cx, cy, 30, (230, 120, 40))                                   # orange shell
-    puff(d, cx, cy - 4, 20, (255, 190, 60))                               # yellow core
-    puff(d, cx, cy - 2, 11, (255, 240, 170))                              # white-hot core
-    # dust plume trailing right (southwest drift)
-    d.polygon([(cx + 10, cy + 18), (w - 4, cy + 6), (w - 4, cy + 26),
-               (cx + 8, cy + 30)], fill=(200, 195, 180, 255))
-    d.polygon([(cx + 14, cy + 22), (w - 4, cy + 14), (w - 4, cy + 20),
-               (cx + 12, cy + 26)], fill=(180, 175, 160, 255))
-    return im
-
-
-def art_cyber(w, h):
-    """Agency building + hacked screen."""
-    im = layer(w, h)
-    d = ImageDraw.Draw(im)
-    d.rectangle([0, 0, w, h], fill=(24, 32, 56, 255))                     # dark blue
-    # agency building (left half)
-    d.rectangle([6, h * 0.30, w * 0.52, h - 8], fill=(210, 205, 190, 255))
-    d.polygon([(4, h * 0.30), (w * 0.27, h * 0.18), (w * 0.54, h * 0.30)],
-              fill=(180, 175, 160, 255))
-    for i in range(4):
-        x0 = 12 + i * 22
-        d.rectangle([x0, h * 0.36, x0 + 10, h - 12], fill=(160, 155, 140, 255))
-    d.rectangle([w * 0.10, h * 0.42, w * 0.44, h * 0.50], fill=(31, 42, 68, 255))
-    d.text((w * 0.13, h * 0.43), "CIA · ODNI", font=F(SANS_B, 8),
-           fill=(255, 255, 255, 255))
-    # big screen (right half)
-    sx0, sy0, sx1, sy1 = int(w * 0.56), int(h * 0.14), w - 6, int(h * 0.82)
-    d.rectangle([sx0, sy0, sx1, sy1], fill=(12, 20, 34, 255),
-                outline=(212, 160, 60, 255), width=2)
-    for i, ln in enumerate([14, 26, 20, 28, 16]):
-        y = sy0 + 8 + i * 9
-        d.line([sx0 + 6, y, sx0 + 6 + ln, y], fill=(80, 220, 120, 255), width=2)
-    # red warning triangle + BREACH
-    tx, ty = (sx0 + sx1) // 2, sy0 + 52
-    d.polygon([(tx, ty - 12), (tx + 12, ty + 8), (tx - 12, ty + 8)],
-              fill=(220, 50, 40, 255))
-    d.text((tx - 2, ty - 8), "!", font=F(SANS_B, 12), fill=(255, 255, 255, 255))
-    d.text((sx0 + 8, sy1 - 16), "BREACH", font=F(SANS_B, 11),
-           fill=(220, 50, 40, 255))
-    return im
-
 
 def art_refinery(w, h):
-    """Refinery towers burning at dusk + drone."""
-    im = layer(w, h)
-    d = ImageDraw.Draw(im)
-    d.rectangle([0, 0, w, h * 0.55], fill=(60, 50, 70, 255))              # dusk sky
-    d.rectangle([0, h * 0.45, w, h * 0.55], fill=(230, 140, 60, 255))     # horizon glow
-    d.ellipse([w * 0.08, h * 0.06, w * 0.20, h * 0.18], fill=(240, 200, 120, 255))
-    # ground
-    d.rectangle([0, h * 0.55, w, h], fill=(40, 38, 44, 255))
+    im, d = panel(w, h, (200, 190, 165))
+    d.rectangle([0, int(h * 0.55), w, h], fill=(90, 85, 75, 255))
     # towers
-    for x0, tw, th in [(10, 16, 42), (32, 12, 56), (50, 18, 36), (72, 12, 50),
-                       (92, 16, 40), (114, 12, 46)]:
-        d.rectangle([x0, h - th - 22, x0 + tw, h - 22], fill=(25, 25, 30, 255))
-        d.rectangle([x0 + 2, h - th - 26, x0 + tw - 2, h - th - 22],
-                    fill=(25, 25, 30, 255))
-        for wy in range(int(h - th - 14), int(h - 26), 8):
-            d.rectangle([x0 + 3, wy, x0 + tw - 3, wy + 3], fill=(240, 200, 90, 255))
+    for tx, tw, th in [(10, 16, 34), (34, 12, 46), (120, 14, 40), (142, 10, 30)]:
+        d.rectangle([tx, h - th - 8, tx + tw, h - 8], fill=(70, 68, 64, 255))
+        d.rectangle([tx + 2, h - th - 14, tx + tw - 2, h - th - 8],
+                    fill=(70, 68, 64, 255))
     # storage tanks
-    d.ellipse([w - 34, h - 44, w - 8, h - 22], fill=(70, 68, 72, 255))
-    d.rectangle([w - 34, h - 34, w - 8, h - 22], fill=(70, 68, 72, 255))
-    # flames on two towers + smoke
-    flame(d, 40, h - 62, 16, 22)
-    flame(d, 100, h - 56, 13, 18)
-    puff(d, 40, h - 78, 12, (90, 90, 95))
-    puff(d, 100, h - 70, 10, (90, 90, 95))
-    # drone silhouette (upper right)
-    dx, dy = int(w * 0.80), int(h * 0.16)
-    d.ellipse([dx - 8, dy - 3, dx + 8, dy + 3], fill=(15, 15, 18, 255))
-    d.line([dx - 12, dy - 6, dx + 12, dy - 6], fill=(15, 15, 18, 255), width=2)
-    d.line([dx - 12, dy + 6, dx + 12, dy + 6], fill=(15, 15, 18, 255), width=2)
+    d.ellipse([58, h - 26, 100, h - 8], fill=(150, 145, 135, 255))
+    d.rectangle([58, h - 22, 100, h - 8], fill=(150, 145, 135, 255))
+    # flames
+    d.ellipse([84, 8, 118, 34], fill=(245, 160, 40, 255))
+    d.ellipse([92, 16, 112, 38], fill=(224, 70, 52, 255))
+    d.ellipse([96, 24, 108, 40], fill=(245, 220, 90, 255))
+    # smoke
+    for sx, sy, sr in [(100, 4, 7), (112, 0, 5), (88, 2, 5)]:
+        d.ellipse([sx - sr, sy - sr, sx + sr, sy + sr], fill=(60, 60, 60, 220))
+    # drone silhouette
+    d.ellipse([132, 10, 138, 16], fill=(26, 26, 26, 255))
+    d.line([(124, 12), (146, 12)], fill=(26, 26, 26, 255), width=2)
+    d.line([(128, 8), (128, 18)], fill=(26, 26, 26, 255), width=1)
+    d.line([(140, 8), (140, 18)], fill=(26, 26, 26, 255), width=1)
     return im
 
+def art_iowa(w, h):
+    im, d = panel(w, h, (168, 196, 224))
+    d.rectangle([0, int(h * 0.72), w, h], fill=(90, 130, 70, 255))
+    # blast cloud
+    d.ellipse([28, 18, 78, 52], fill=(245, 160, 40, 255))
+    d.ellipse([58, 8, 108, 44], fill=(245, 200, 90, 255))
+    d.ellipse([88, 20, 132, 52], fill=(224, 110, 40, 255))
+    d.ellipse([52, 26, 96, 54], fill=(250, 225, 150, 255))
+    # plume
+    d.polygon([(96, 44), (112, 44), (124, 8), (108, 8)], fill=(150, 150, 148, 220))
+    d.ellipse([102, 2, 124, 16], fill=(170, 170, 168, 220))
+    # ground debris dots
+    for dx, dy in [(20, 56), (140, 58), (60, 60), (120, 52)]:
+        d.ellipse([dx - 2, dy - 2, dx + 2, dy + 2], fill=(60, 60, 60, 255))
+    return im
+
+def art_cyber(w, h):
+    im, d = panel(w, h, (200, 205, 215))
+    # agency building
+    d.polygon([(14, 22), (w // 2, 6), (w - 14, 22)], fill=(120, 125, 135, 255))
+    d.rectangle([18, 22, w - 18, h - 8], fill=(150, 155, 165, 255))
+    for cx in (30, 56, 82, 108, 134):
+        d.rectangle([cx, 26, cx + 8, h - 12], fill=(230, 232, 236, 255))
+    d.rectangle([18, h - 12, w - 18, h - 8], fill=(100, 105, 115, 255))
+    # breach screen
+    d.rectangle([w - 64, 28, w - 8, h - 10], fill=(16, 24, 44, 255),
+                outline=(255, 255, 255, 255), width=1)
+    f = F(9, bold=True)
+    d.text((w - 60, 31), "BREACH", font=f, fill=(224, 70, 52))
+    d.text((w - 60, 42), "0101 1100", font=F(7), fill=(120, 220, 120))
+    d.text((w - 60, 51), "ACCESS", font=F(7), fill=(120, 220, 120))
+    return im
 
 def art_satellite(w, h):
-    """Nuclear-armed satellite in orbit above Earth."""
-    im = layer(w, h)
-    d = ImageDraw.Draw(im)
-    d.rectangle([0, 0, w, h], fill=(14, 20, 44, 255))
-    stars(d, w, int(h * 0.70), n=22, seed=11)
+    im, d = panel(w, h, (16, 24, 44))
+    import random
+    rnd = random.Random(8)
+    for _ in range(30):
+        x, y = rnd.randint(2, w - 2), rnd.randint(2, int(h * 0.6))
+        d.ellipse([x - 1, y - 1, x + 1, y + 1], fill=(255, 255, 255, 200))
     # Earth arc
-    d.ellipse([-w * 0.3, h * 0.72, w * 1.3, h * 1.7], fill=(52, 96, 160, 255))
-    d.ellipse([w * 0.10, h * 0.82, w * 0.34, h * 0.98], fill=(70, 140, 90, 255))
-    d.arc([-w * 0.3, h * 0.72, w * 1.3, h * 1.7], 180, 360,
-          fill=(140, 200, 240, 255), width=2)
+    d.ellipse([-w * 0.3, int(h * 0.8), w * 1.3, int(h * 1.8)], fill=(46, 88, 140, 255))
+    d.ellipse([-w * 0.3, int(h * 0.8), w * 1.3, int(h * 0.88)],
+              fill=(120, 180, 230, 255))
     # red orbit ellipse
-    d.ellipse([6, h * 0.10, w - 6, h * 0.62], outline=(200, 70, 60, 255), width=2)
-    # satellite: gold body + blue panels
-    sx, sy = int(w * 0.52), int(h * 0.32)
-    d.rectangle([sx - 46, sy - 7, sx - 10, sy + 7], fill=(40, 80, 160, 255))
-    d.rectangle([sx + 10, sy - 7, sx + 46, sy + 7], fill=(40, 80, 160, 255))
-    for x in range(sx - 46, sx + 46, 9):
-        d.line([x, sy - 7, x, sy + 7], fill=(140, 180, 230, 255), width=1)
-    d.rectangle([sx - 10, sy - 11, sx + 10, sy + 11], fill=(212, 160, 60, 255),
-                outline=(120, 80, 20, 255))
-    # radiation trefoil on the body
-    cx, cy, r = sx, sy, 6
-    d.ellipse([cx - 2, cy - 2, cx + 2, cy + 2], fill=(176, 58, 46, 255))
-    for a0 in (270, 30, 150):
-        d.pieslice([cx - r, cy - r, cx + r, cy + r], a0, a0 + 50,
-                   fill=(176, 58, 46, 255))
-    d.text((sx - 26, sy + 16), "SPUTNIK-S", font=F(SANS_B, 8),
-           fill=(255, 255, 255, 255))
+    d.ellipse([8, 6, w - 8, h - 6], outline=(224, 70, 52, 255), width=2)
+    # satellite
+    sx, sy = w // 2, h // 2 - 8
+    d.rectangle([sx - 12, sy - 8, sx + 12, sy + 8], fill=(220, 225, 232, 255))
+    d.rectangle([sx - 12, sy - 8, sx + 12, sy - 2], fill=(176, 58, 46, 255))
+    d.rectangle([sx - 40, sy - 4, sx - 12, sy + 4], fill=(52, 96, 150, 255))
+    d.rectangle([sx + 12, sy - 4, sx + 40, sy + 4], fill=(52, 96, 150, 255))
+    d.line([(sx, sy - 8), (sx, sy - 16)], fill=(255, 255, 255, 255), width=2)
+    d.ellipse([sx - 2, sy - 19, sx + 2, sy - 15], fill=(245, 220, 90, 255))
     return im
-
 
 def art_cricket(w, h):
-    """Batsman + giant 204 under floodlights."""
-    im = layer(w, h)
-    d = ImageDraw.Draw(im)
-    d.rectangle([0, 0, w, h * 0.52], fill=(46, 90, 60, 255))              # stands
-    for i in range(4):                                                    # crowd rows
-        y = int(h * (0.10 + i * 0.10))
-        for x in range(6, w - 6, 12):
-            col = [(220, 220, 210), (200, 60, 50), (240, 200, 90),
-                   (80, 140, 200)][(x // 12 + i) % 4]
-            d.ellipse([x, y, x + 6, y + 6], fill=col + (255,))
-    # floodlights
-    for fx in (14, w - 26):
-        d.rectangle([fx, 6, fx + 12, 14], fill=(240, 240, 230, 255))
-        d.line([fx + 6, 14, fx + 6, 30], fill=(220, 220, 210, 255), width=2)
+    im, d = panel(w, h, (70, 130, 70))
+    d.rectangle([0, 0, w, int(h * 0.3)], fill=(168, 196, 224, 255))
+    d.rectangle([0, int(h * 0.3), w, h], fill=(70, 130, 70, 255))
+    # crowd dots
+    import random
+    rnd = random.Random(53)
+    for _ in range(26):
+        x, y = rnd.randint(4, w - 4), rnd.randint(4, int(h * 0.26))
+        c = rnd.choice([(245, 220, 90), (255, 255, 255), (224, 70, 52), (52, 96, 150)])
+        d.ellipse([x - 2, y - 2, x + 2, y + 2], fill=c + (255,))
     # pitch
-    d.rectangle([0, h * 0.52, w, h], fill=(110, 160, 80, 255))
-    d.rectangle([w * 0.30, h * 0.52, w * 0.70, h], fill=(214, 190, 140, 255))
-    # giant 204
-    f_big = F(SANS_B, 44)
-    d.text((w * 0.04, h * 0.54), "204", font=f_big, fill=(255, 255, 255, 255))
-    # batsman silhouette (navy) mid-swing
-    bx, by = int(w * 0.68), int(h * 0.78)
-    d.ellipse([bx - 7, by - 34, bx + 7, by - 20], fill=(31, 42, 68, 255))   # helmet
-    d.polygon([(bx - 8, by - 22), (bx + 8, by - 22), (bx + 6, by + 2),
-               (bx - 6, by + 2)], fill=(31, 42, 68, 255))                 # torso
-    d.polygon([(bx - 6, by + 2), (bx + 6, by + 2), (bx + 12, by + 20),
-               (bx + 4, by + 20)], fill=(31, 42, 68, 255))                # legs
-    d.polygon([(bx - 6, by + 2), (bx + 6, by + 2), (bx - 2, by + 20),
-               (bx - 10, by + 20)], fill=(31, 42, 68, 255))
-    d.line([bx + 6, by - 16, bx + 26, by - 38], fill=(150, 100, 50, 255), width=5)  # bat
-    # ball with motion lines
-    d.ellipse([bx + 34, by - 44, bx + 42, by - 36], fill=(200, 40, 40, 255))
-    d.line([bx + 20, by - 40, bx + 32, by - 40], fill=(255, 255, 255, 255), width=2)
-    d.line([bx + 22, by - 34, bx + 32, by - 36], fill=(255, 255, 255, 255), width=2)
+    d.rectangle([w // 2 - 14, int(h * 0.3), w // 2 + 14, h], fill=(216, 190, 140, 255))
+    # stumps
+    for sx in (w // 2 - 6, w // 2, w // 2 + 6):
+        d.line([(sx, h - 16), (sx, h - 6)], fill=(245, 220, 90, 255), width=2)
+    # batsman silhouette
+    bx, by = w // 2 - 26, h - 30
+    d.ellipse([bx - 4, by - 12, bx + 4, by - 4], fill=(26, 26, 26, 255))
+    d.polygon([(bx - 5, by - 4), (bx + 5, by - 4), (bx + 3, by + 12),
+               (bx - 3, by + 12)], fill=(26, 26, 26, 255))
+    d.line([(bx + 4, by - 2), (bx + 14, by + 8)], fill=(180, 140, 90, 255), width=3)
+    # big 204, lower left on the field (clear of the badge top-right)
+    f = F(22, bold=True)
+    d.text((6, h - 28), "204", font=f, fill=(255, 255, 255))
     return im
 
+def art_tanker(w, h):
+    im, d = panel(w, h, (200, 190, 165))
+    d.rectangle([0, int(h * 0.62), w, h], fill=(90, 88, 84, 255))
+    d.line([(0, int(h * 0.62)), (w, int(h * 0.62))], fill=(255, 255, 255, 255), width=2)
+    # overturned tanker
+    d.ellipse([30, 26, 120, 52], fill=(200, 200, 195, 255))
+    d.rectangle([30, 26, 120, 52], fill=(200, 200, 195, 255))
+    d.ellipse([30, 26, 44, 52], fill=(150, 148, 142, 255))
+    d.ellipse([58, 50, 68, 60], fill=(26, 26, 26, 255))
+    d.ellipse([92, 50, 102, 60], fill=(26, 26, 26, 255))
+    # cab
+    d.polygon([(120, 30), (140, 30), (146, 50), (120, 50)], fill=(176, 58, 46, 255))
+    # flame + smoke
+    d.ellipse([58, 6, 96, 30], fill=(245, 160, 40, 255))
+    d.ellipse([68, 12, 88, 32], fill=(224, 70, 52, 255))
+    d.ellipse([74, 18, 84, 32], fill=(245, 220, 90, 255))
+    for sx, sy, sr in [(80, 2, 6), (92, 0, 4)]:
+        d.ellipse([sx - sr, sy - sr, sx + sr, sy + sr], fill=(60, 60, 60, 220))
+    # charred cars
+    for cx in (10, 132):
+        d.rectangle([cx, h - 14, cx + 18, h - 6], fill=(40, 40, 40, 255))
+    return im
 
-ART = {
-    "tariffs": art_tariffs, "chip": art_chip, "space": art_space,
-    "cartagena": art_cartagena, "iowa": art_iowa, "cyber": art_cyber,
-    "refinery": art_refinery, "satellite": art_satellite, "cricket": art_cricket,
-}
+def art_odesa(w, h):
+    im, d = panel(w, h, (24, 28, 48))
+    import random
+    rnd = random.Random(44)
+    for _ in range(24):
+        x, y = rnd.randint(2, w - 2), rnd.randint(2, 16)
+        d.ellipse([x - 1, y - 1, x + 1, y + 1], fill=(255, 255, 255, 200))
+    # skyline
+    for bx, bw, bh in [(0, 26, 22), (28, 20, 34), (50, 24, 26), (76, 18, 38),
+                       (96, 22, 24), (120, 24, 32), (146, 15, 20)]:
+        d.rectangle([bx, h - bh, bx + bw, h], fill=(10, 12, 20, 255))
+        for wy in range(h - bh + 4, h - 4, 8):
+            d.rectangle([bx + 4, wy, bx + 8, wy + 4], fill=(245, 220, 90, 200))
+    # explosion flash
+    d.ellipse([58, 12, 96, 40], fill=(245, 160, 40, 255))
+    d.ellipse([66, 18, 88, 36], fill=(245, 220, 90, 255))
+    d.ellipse([74, 24, 82, 34], fill=(255, 255, 255, 255))
+    d.ellipse([70, 2, 86, 14], fill=(60, 60, 60, 220))
+    return im
 
-# ---------------------------------------------------------------- map
-def draw_map(d, x0, y0, x1, y1):
-    """Full-width world map: sea, graticule, continents, numbered dots."""
-    d.rectangle([x0, y0, x1, y1], fill=SKY)
-    # graticule every 30 deg lon / 20 deg lat
-    for lon in range(-150, 181, 30):
-        x = x0 + (lon + 170) * (x1 - x0) / 360.0
-        d.line([x, y0, x, y1], fill=GRID, width=1)
-    for lat in range(-40, 61, 20):
-        y = y0 + (75 - lat) * (y1 - y0) / 130.0
-        d.line([x0, y, x1, y], fill=GRID, width=1)
-    # continents
+def art_gaza(w, h):
+    im, d = panel(w, h, (70, 66, 60))
+    # ruined skyline silhouettes
+    for bx, bw, bh in [(0, 30, 26), (32, 22, 40), (56, 26, 30), (84, 20, 44),
+                       (106, 24, 28), (132, 29, 36)]:
+        d.polygon([(bx, h), (bx, h - bh), (bx + bw // 2, h - bh - 8),
+                   (bx + bw, h - bh), (bx + bw, h)], fill=(30, 28, 26, 255))
+    # smoke columns
+    for sx in (44, 96, 140):
+        d.ellipse([sx - 6, 4, sx + 6, 18], fill=(150, 148, 144, 200))
+        d.ellipse([sx - 4, 14, sx + 4, 26], fill=(130, 128, 124, 200))
+    # single lit window (memorial)
+    d.rectangle([60, h - 22, 66, h - 14], fill=(245, 220, 90, 255))
+    # candle glow
+    d.ellipse([118, h - 20, 126, h - 8], fill=(245, 200, 90, 255))
+    d.ellipse([121, h - 24, 123, h - 20], fill=(255, 255, 255, 255))
+    return im
+
+def art_huawei(w, h):
+    im, d = panel(w, h, (200, 205, 215))
+    # courthouse
+    d.polygon([(16, 26), (w // 2, 8), (w - 16, 26)], fill=(120, 125, 135, 255))
+    d.rectangle([20, 26, w - 20, h - 12], fill=(150, 155, 165, 255))
+    for cx in (32, 58, 84, 110, 136):
+        d.rectangle([cx, 30, cx + 8, h - 16], fill=(230, 232, 236, 255))
+    d.rectangle([16, h - 12, w - 16, h - 8], fill=(100, 105, 115, 255))
+    # gavel
+    d.line([(108, 34), (140, 20)], fill=(120, 80, 40, 255), width=4)
+    d.rectangle([132, 12, 150, 24], fill=(90, 60, 30, 255))
+    # document
+    d.rectangle([20, 36, 54, h - 8], fill=(253, 251, 243, 255),
+                outline=(26, 26, 26, 255), width=1)
+    for i in range(3):
+        d.line([(24, 41 + i * 5), (50, 41 + i * 5)], fill=(26, 26, 26, 255), width=1)
+    return im
+
+def art_climate(w, h):
+    im, d = panel(w, h, (168, 196, 224))
+    # globe
+    d.ellipse([6, 4, 54, 52], fill=(46, 88, 140, 255))
+    d.ellipse([16, 16, 36, 32], fill=(46, 110, 70, 255))
+    d.ellipse([32, 34, 50, 48], fill=(46, 110, 70, 255))
+    d.ellipse([38, 10, 48, 20], fill=(46, 110, 70, 255))
+    # thermometer
+    d.rectangle([100, 4, 112, 40], fill=(255, 255, 255, 255),
+                outline=(26, 26, 26, 255), width=2)
+    d.rectangle([103, 12, 109, 40], fill=(224, 70, 52, 255))
+    d.ellipse([95, 36, 117, 58], fill=(224, 70, 52, 255),
+              outline=(26, 26, 26, 255), width=2)
+    # sun rays
+    for ang in range(0, 360, 45):
+        import math
+        x1 = 140 + int(10 * math.cos(math.radians(ang)))
+        y1 = 20 + int(10 * math.sin(math.radians(ang)))
+        x2 = 140 + int(16 * math.cos(math.radians(ang)))
+        y2 = 20 + int(16 * math.sin(math.radians(ang)))
+        d.line([(x1, y1), (x2, y2)], fill=(245, 160, 40, 255), width=2)
+    d.ellipse([132, 12, 148, 28], fill=(245, 200, 90, 255))
+    # 2C label
+    f = F(12, bold=True)
+    d.text((122, 44), "+2\u00b0C", font=f, fill=RED)
+    return im
+
+def art_heat(w, h):
+    im, d = panel(w, h, (245, 220, 150))
+    # blazing sun
+    import math
+    for ang in range(0, 360, 30):
+        x1 = 40 + int(20 * math.cos(math.radians(ang)))
+        y1 = 26 + int(20 * math.sin(math.radians(ang)))
+        x2 = 40 + int(28 * math.cos(math.radians(ang)))
+        y2 = 26 + int(28 * math.sin(math.radians(ang)))
+        d.line([(x1, y1), (x2, y2)], fill=(224, 110, 40, 255), width=3)
+    d.ellipse([24, 10, 56, 42], fill=(245, 160, 40, 255))
+    d.ellipse([30, 16, 50, 36], fill=(245, 220, 90, 255))
+    # city skyline
+    for bx, bw, bh in [(70, 22, 24), (94, 18, 34), (114, 24, 20), (140, 17, 28)]:
+        d.rectangle([bx, h - bh, bx + bw, h], fill=(90, 70, 60, 255))
+        for wy in range(h - bh + 4, h - 4, 8):
+            d.rectangle([bx + 4, wy, bx + 8, wy + 4], fill=(245, 220, 90, 200))
+    # heat haze
+    for i in range(3):
+        y = 48 + i * 6
+        d.arc([70, y, 150, y + 8], 200, 340, fill=(224, 110, 40, 200), width=2)
+    return im
+
+ART = {"tariffs": art_tariffs, "chip": art_chip, "space": art_space,
+       "cartagena": art_cartagena, "refinery": art_refinery, "iowa": art_iowa,
+       "cyber": art_cyber, "satellite": art_satellite, "cricket": art_cricket,
+       "tanker": art_tanker, "odesa": art_odesa, "gaza": art_gaza,
+       "huawei": art_huawei, "climate": art_climate, "heat": art_heat}
+
+# simplified continents (lon/lat polygons, stylised)
+CONTINENTS = [
+    [(-168, 66), (-140, 70), (-125, 72), (-110, 73), (-95, 80), (-85, 75),
+     (-75, 72), (-60, 62), (-55, 52), (-65, 45), (-75, 38), (-80, 32),
+     (-85, 28), (-90, 21), (-97, 16), (-105, 20), (-115, 28), (-125, 40),
+     (-125, 49), (-140, 60), (-155, 58), (-165, 60)],
+    [(-80, 10), (-75, 5), (-70, 0), (-60, -5), (-50, -5), (-40, -10),
+     (-35, -15), (-40, -25), (-50, -30), (-60, -35), (-65, -45), (-70, -52),
+     (-75, -40), (-75, -25), (-80, -15), (-80, -5)],
+    [(-10, 36), (-5, 44), (0, 48), (5, 53), (10, 58), (15, 60), (20, 65),
+     (25, 70), (30, 68), (35, 60), (40, 55), (35, 50), (30, 45), (25, 40),
+     (20, 38), (15, 36), (10, 38), (5, 36), (0, 36)],
+    [(-17, 15), (-10, 30), (0, 35), (10, 37), (20, 32), (30, 31), (35, 28),
+     (40, 15), (48, 10), (51, 5), (48, -5), (40, -10), (35, -20), (30, -28),
+     (25, -33), (18, -35), (12, -25), (10, -15), (8, -5), (0, 5), (-8, 5),
+     (-15, 10)],
+    [(40, 55), (50, 60), (60, 65), (70, 70), (80, 73), (90, 75), (100, 76),
+     (110, 74), (120, 73), (130, 72), (140, 72), (150, 70), (160, 65),
+     (170, 66), (175, 62), (165, 60), (160, 55), (155, 50), (145, 45),
+     (140, 40), (135, 35), (130, 30), (125, 28), (120, 25), (115, 20),
+     (110, 15), (105, 10), (100, 8), (95, 10), (90, 15), (85, 20), (80, 15),
+     (75, 10), (70, 15), (65, 20), (60, 25), (55, 25), (50, 28), (48, 30),
+     (45, 35), (40, 40), (40, 50)],
+    [(113, -22), (114, -30), (120, -34), (130, -32), (140, -38), (150, -37),
+     (153, -28), (150, -22), (145, -15), (140, -12), (135, -12), (130, -13),
+     (125, -15), (120, -20), (114, -22)],
+]
+
+# ------------------------------------------------------------------ LAYOUT
+MX = 14
+CW = W - 2 * MX  # 996
+
+def fit_font(text, size, bold=False, serif=False, italic=False, max_w=996):
+    s = size
+    while s > 6:
+        f = F(s, bold=bold, serif=serif, italic=italic)
+        if ImageDraw.Draw(Image.new("RGB", (8, 8))).textlength(text, font=f) <= max_w:
+            return f
+        s -= 1
+    return F(6, bold=bold, serif=serif, italic=italic)
+
+def draw_topbar(d, y):
+    d.rectangle([MX, y, MX + CW, y + 18], fill=NAVY)
+    f = fit_font(TOPBAR, 11, bold=True, max_w=CW - 16)
+    d.text(((W - d.textlength(TOPBAR, font=f)) / 2, y + 3), TOPBAR, font=f,
+           fill=(246, 240, 224))
+    return y + 18
+
+def draw_masthead(d, y):
+    f = fit_font(MASTHEAD, 54, bold=True, serif=True, max_w=CW)
+    d.text(((W - d.textlength(MASTHEAD, font=f)) / 2, y), MASTHEAD, font=f, fill=NAVY)
+    return y + 56
+
+def draw_subhead(d, y):
+    f = fit_font(SUBHEAD, 15, serif=True, italic=True, max_w=CW)
+    d.text(((W - d.textlength(SUBHEAD, font=f)) / 2, y), SUBHEAD, font=f, fill=RED)
+    return y + 18
+
+def draw_chips(d, y):
+    labels = [("N. AMERICA", 8), ("LATIN AM.", 2), ("EUROPE", 12),
+              ("MIDDLE EAST", 10), ("N. AFRICA", 1), ("SUB-SAH. AFRICA", 2),
+              ("SOUTH ASIA", 3), ("EAST & SE ASIA", 5), ("OCEANIA", 2),
+              ("GLOBAL", 3)]
+    colors = [c for _, _, c in REGIONS]
+    gap, ch = 3, 22
+    cw = (CW - gap * 9) / 10
+    for i, ((name, n), col) in enumerate(zip(labels, colors)):
+        x = MX + i * (cw + gap)
+        txt = "%s %d" % (name, n)
+        f = F(9, bold=True)
+        while d.textlength(txt, font=f) > cw - 6 and f.size > 7:
+            f = F(f.size - 1, bold=True)
+        d.rounded_rectangle([x, y, x + cw, y + ch], radius=3, fill=col)
+        d.text((x + (cw - d.textlength(txt, font=f)) / 2, y + (ch - f.size) / 2 - 1),
+               txt, font=f, fill=(255, 255, 255))
+    return y + ch
+
+def draw_fields(d, y):
+    parts = ["%s %d" % (n, c) for n, c in FIELDS]
+    txt = "17 FIELDS \u00b7 " + " \u00b7 ".join(parts)
+    f = fit_font(txt, 10, max_w=CW)
+    d.text((MX, y + 2), "17 FIELDS", font=F(10, bold=True), fill=RED)
+    rest = txt[len("17 FIELDS "):]
+    d.text((MX + d.textlength("17 FIELDS ", font=F(10, bold=True)), y + 2),
+           rest, font=f, fill=INK)
+    return y + 16
+
+def draw_numbers(d, y):
+    cw = CW / 6
+    fnum = F(24, bold=True)
+    flab = F(8, bold=True)
+    for i, (num, lab) in enumerate(NUMBERS):
+        x = MX + i * cw
+        if i:
+            d.line([(x - 3, y + 4), (x - 3, y + 46)], fill=TAN_D, width=1)
+        d.text((x + (cw - d.textlength(num, font=fnum)) / 2, y + 2), num,
+               font=fnum, fill=RED)
+        d.text((x + (cw - d.textlength(lab, font=flab)) / 2, y + 32), lab,
+               font=flab, fill=NAVY)
+    rule(d, MX, y + 50, CW, NAVY, 1)
+    return y + 50
+
+def draw_utc(d, y):
+    d.rectangle([MX, y, MX + CW, y + 36], fill=PAPER, outline=NAVY, width=1)
+    d.text((MX + 8, y + 12), "THE DAY IN UTC", font=F(9, bold=True), fill=NAVY)
+    x0 = MX + 96
+    for li, items in enumerate((UTC_A, UTC_B)):
+        yy = y + 4 + li * 15
+        x = x0
+        for ti, (tm, ev) in enumerate(items):
+            ft, fe = F(10, bold=True), F(10)
+            if ti:
+                d.text((x, yy), "\u00b7", font=fe, fill=GREY)
+                x += d.textlength("\u00b7  ", font=fe)
+            d.text((x, yy), tm, font=ft, fill=RED)
+            x += d.textlength(tm + " ", font=ft)
+            d.text((x, yy), ev, font=fe, fill=INK)
+            x += d.textlength(ev + "  ", font=fe)
+    return y + 36
+
+def draw_hero(d, img, x, y, w, h, hero):
+    art = ART[hero["art"]](w, 118)
+    img.paste(art, (x, y), art)
+    num_badge(d, x + 14, y + 14, 13, hero["num"])
+    st = hero["status"]
+    sbg = GREEN if st == "CONFIRMED" else RED
+    fchip = F(9, bold=True)
+    sw = d.textlength(st, font=fchip) + 14
+    d.rounded_rectangle([x + w - sw - 4, y + 4, x + w - 4, y + 22], radius=3, fill=sbg)
+    d.text((x + w - sw - 4 + 7, y + 7), st, font=fchip, fill=(255, 255, 255))
+    yy = y + 122
+    d.text((x, yy), hero["place"], font=F(10, bold=True), fill=NAVY)
+    yy += 14
+    lines = wrap(d, hero["head"], F(15, bold=True), w)[:2]
+    yy = draw_lines(d, x, yy, lines, F(15, bold=True), INK, 17)
+    yy += 3
+    blines = wrap(d, hero["body"], F(10, italic=False), w)[:3]
+    yy = draw_lines(d, x, yy, blines, F(10), INK, 13)
+    yy += 3
+    d.text((x, yy), "WHY IT MATTERS", font=F(9, bold=True), fill=RED)
+    yy += 12
+    wlines = wrap(d, hero["why"], F(10, italic=True), w)[:2]
+    yy = draw_lines(d, x, yy, wlines, F(10, italic=True), INK, 12)
+    yy += 2
+    d.text((x, yy), hero["src"], font=F(8), fill=GREY)
+    return y + h
+
+def draw_medium(d, img, x, y, w, h, m):
+    art = ART[m["art"]](w, 62)
+    img.paste(art, (x, y), art)
+    num_badge(d, x + 11, y + 11, 10, m["num"])
+    fb = F(8, bold=True)
+    bw = d.textlength(m["badge"], font=fb) + 10
+    d.rounded_rectangle([x + w - bw - 3, y + 3, x + w - 3, y + 18], radius=3, fill=RED)
+    d.text((x + w - bw - 3 + 5, y + 5), m["badge"], font=fb, fill=(255, 255, 255))
+    yy = y + 65
+    d.text((x, yy), m["place"], font=F(8, bold=True), fill=NAVY)
+    yy += 11
+    lines = wrap(d, m["head"], F(10, bold=True), w)[:2]
+    yy = draw_lines(d, x, yy, lines, F(10, bold=True), INK, 12)
+    blines = wrap(d, m["body"], F(9), w)[:3]
+    yy = draw_lines(d, x, yy, blines, F(9), INK, 11)
+    yy += 1
+    d.text((x, yy), m["src"], font=F(8), fill=GREY)
+    return y + h
+
+def draw_map(d, x, y, w, h):
+    d.rectangle([x, y, x + w, y + h], fill=(232, 226, 205, 255),
+                outline=NAVY, width=1)
+    # graticule
+    for gx in range(0, w + 1, 30):
+        d.line([(x + gx, y), (x + gx, y + h)], fill=(255, 255, 255, 90), width=1)
+    for gy in range(0, h + 1, 24):
+        d.line([(x, y + gy), (x + w, y + gy)], fill=(255, 255, 255, 90), width=1)
+    def proj(lon, lat):
+        return (x + (lon + 180) / 360.0 * w, y + (85 - lat) / 145.0 * h)
     for poly in CONTINENTS:
-        pts = [(x0 + (lon + 170) * (x1 - x0) / 360.0,
-                y0 + (75 - lat) * (y1 - y0) / 130.0) for lon, lat in poly]
-        d.polygon(pts, fill=LAND, outline=NAVY)
-    # dots
-    for num, lon, lat, is_hero in MAP_DOTS:
-        cx = x0 + (lon + 170) * (x1 - x0) / 360.0
-        cy = y0 + (75 - lat) * (y1 - y0) / 130.0
-        if is_hero:
-            r, col, fs = 8, RED, 8
-        else:
-            r, col, fs = 6, NAVY, 7
-        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=col,
+        pts = [proj(lon, lat) for lon, lat in poly]
+        d.polygon(pts, fill=TAN, outline=(120, 105, 70))
+    for num, lon, lat, hero in MAP_DOTS:
+        cx, cy = proj(lon, lat)
+        r = 5 if hero else 4
+        fill = RED if hero else NAVY
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=fill,
                   outline=(255, 255, 255), width=1)
-        f = F(SANS_B, fs)
+        f = F(6, bold=True)
         t = str(num)
-        d.text((cx - d.textlength(t, font=f) / 2, cy - fs / 2 - 1), t,
+        d.text((cx - d.textlength(t, font=f) / 2, cy - f.size / 2 - 1), t,
                font=f, fill=(255, 255, 255))
 
+def draw_bottom(d, y, h):
+    # map block, left
+    mw = 300
+    d.text((MX, y), "WHERE IT HAPPENED", font=F(10, bold=True), fill=NAVY)
+    d.text((MX + mw - d.textlength("30 NUMBERED PLACES", font=F(8, bold=True)),
+            y + 1), "30 NUMBERED PLACES", font=F(8, bold=True), fill=GREY)
+    draw_map(d, MX, y + 14, mw, 118)
+    ly = y + 136
+    leg1 = [("N. AMERICA", NAVY), ("LATIN AM.", TEAL), ("EUROPE", BLUE),
+            ("MIDDLE EAST", RED)]
+    leg2 = [("N. AFRICA", OCHRE), ("SUB-SAH. AFRICA", GREEN), ("SOUTH ASIA", ORANGE),
+            ("EAST & SE ASIA", PURPLE), ("OCEANIA", (28, 96, 110)), ("GLOBAL", (110, 110, 110))]
+    fl = F(8)
+    xx = MX
+    for name, col in leg1:
+        d.rectangle([xx, ly + 1, xx + 7, ly + 8], fill=col)
+        d.text((xx + 9, ly), name, font=fl, fill=INK)
+        xx += 9 + d.textlength(name, font=fl) + 8
+    ly += 10
+    xx = MX
+    for name, col in leg2:
+        d.rectangle([xx, ly + 1, xx + 7, ly + 8], fill=col)
+        d.text((xx + 9, ly), name, font=fl, fill=INK)
+        xx += 9 + d.textlength(name, font=fl) + 8
+    ly += 10
+    d.text((MX, ly), HERO_PLACES, font=F(7), fill=GREY)
+    # ALSO list, right
+    ax = MX + mw + 10
+    aw = W - MX - ax
+    d.text((ax, y), "ALSO ON 25 NOVEMBER \u2014 33 MORE STORIES",
+           font=F(10, bold=True), fill=NAVY)
+    colw = (aw - 8) / 2
+    fnum = F(9, bold=True)
+    fitem = F(9)
+    per = 17
+    for i, (num, head) in enumerate(ALSO):
+        col = 0 if i < per else 1
+        row = i if i < per else i - per
+        ix = ax + col * (colw + 8)
+        iy = y + 15 + row * 8
+        d.text((ix, iy), str(num), font=fnum, fill=RED)
+        d.text((ix + 16, iy), head, font=fitem, fill=INK)
+    return y + h
 
-def badge(d, cx, cy, num):
-    """Red number badge (circle) centred at cx, cy."""
-    r = 13
-    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=RED,
-              outline=(255, 255, 255), width=2)
-    f = F(SANS_B, 13)
-    t = str(num)
-    d.text((cx - d.textlength(t, font=f) / 2, cy - 7), t, font=f,
-           fill=(255, 255, 255))
+def draw_datecheck(d, y, h):
+    d.rectangle([MX, y, MX + CW, y + h], fill=PAPER, outline=RED, width=1)
+    f = F(8)
+    l1 = wrap(d, DATE_CHECK, f, CW - 12)
+    l2 = wrap(d, DATE_INSIDE, f, CW - 12)
+    yy = y + 3
+    for ln in (l1 + l2)[:3]:
+        d.text((MX + 6, yy), ln, font=f, fill=INK)
+        yy += 11
+    return y + h
 
+def draw_footer(d, y):
+    f1 = F(9, bold=True)
+    d.text(((W - d.textlength(FOOTER_GUARANTEE, font=f1)) / 2, y),
+           FOOTER_GUARANTEE, font=f1, fill=NAVY)
+    f2 = F(8)
+    d.text(((W - d.textlength(FOOTER_SOURCES, font=f2)) / 2, y + 11),
+           FOOTER_SOURCES, font=f2, fill=GREY)
+    return y + 22
 
-def chip(d, x, y, text):
-    """Small red data chip; returns width used."""
-    f = F(SANS_B, 9)
-    tw = d.textlength(text, font=f)
-    w = int(tw + 12)
-    d.rounded_rectangle([x, y, x + w, y + 15], radius=4, fill=RED)
-    d.text((x + 6, y + 2), text, font=f, fill=(255, 255, 255))
-    return w
-
-
-# ---------------------------------------------------------------- page assembly
 def build():
     img = Image.new("RGB", (W, H), CREAM)
     d = ImageDraw.Draw(img)
-    # outer double border
-    d.rectangle([8, 8, W - 9, H - 9], outline=NAVY, width=3)
-    d.rectangle([12, 12, W - 13, H - 13], outline=NAVY, width=1)
-
-    # ---- masthead
-    f_title = fit_font(d, MASTHEAD, SERIF_B, 46, 992)
-    center(d, W // 2, 18, MASTHEAD, f_title, NAVY)
-    f_date = fit_font(d, DATE_LINE, SANS_B, 16, 992)
-    center(d, W // 2, 70, DATE_LINE, f_date, RED)
-    d.line([16, 92, 1008, 92], fill=NAVY, width=2)
-    d.line([16, 95, 1008, 95], fill=NAVY, width=1)
-
-    # ---- UTC strip
-    parts = ["THE DAY IN UTC"]
-    for tm, ev in UTC_ITEMS:
-        parts.append(f"{tm} {ev}" if tm else ev)
-    utc_text = "  ·  ".join(parts)
-    f_utc = fit_font(d, utc_text, SANS_B, 10, 992, min_size=8)
-    center(d, W // 2, 100, utc_text, f_utc, NAVY)
-
-    # ---- numbers strip
-    y0, y1 = 120, 176
-    d.line([16, y0, 1008, y0], fill=NAVY, width=1)
-    d.line([16, y1, 1008, y1], fill=NAVY, width=1)
-    for i, (big, lab) in enumerate(NUMBERS):
-        cx = 16 + (i + 0.5) * 992 / 6
-        if i:
-            d.line([16 + i * 992 / 6, y0 + 4, 16 + i * 992 / 6, y1 - 4],
-                   fill=(190, 180, 160), width=1)
-        f_big = fit_font(d, big, SANS_B, 25, 150)
-        center(d, cx, y0 + 4, big, f_big, RED)
-        f_lab = F(SANS_B, 8)
-        for j, ln in enumerate(wrap(d, lab, f_lab, 150)):
-            center(d, cx, y0 + 32 + j * 10, ln, f_lab, NAVY)
-
-    # ---- big heroes (3 columns)
-    for i, hro in enumerate(BIG):
-        x = 16 + i * 328
-        w = 320
-        y_top, y_bot = 180, 402
-        d.rectangle([x, y_top, x + w, y_bot], fill=PAPER, outline=NAVY, width=2)
-        # illustration layer (clipped to its own box by construction)
-        art = ART[hro["art"]](w - 4, 112)
-        img.paste(art, (x + 2, y_top + 2), art)
-        if i == 0:  # TOP STORY ribbon
-            d.rectangle([x + 2, y_top + 2, x + w - 2, y_top + 20], fill=RED)
-            f_r = F(SANS_B, 10)
-            center(d, x + w // 2, y_top + 5, "★  TOP STORY  ★", f_r,
-                   (255, 255, 255))
-        badge(d, x + 18, y_top + 36, hro["num"])
-        # headline
-        f_head = fit_font(d, hro["head"], SERIF_B, 13, w - 16, min_size=11)
-        y = draw_wrapped(d, x + 8, y_top + 118, hro["head"], f_head, NAVY,
-                         w - 16, 2, 15)
-        # body
-        f_body = F(SANS, 10)
-        y = draw_wrapped(d, x + 8, y + 3, hro["body"], f_body, INK_SOFT,
-                         w - 16, 3, 12)
-        # WHY line
-        why = "WHY: " + hro["why"]
-        f_why = fit_font(d, why, ITALIC, 10, w - 16, min_size=8)
-        d.text((x + 8, y_bot - 30), why, font=f_why, fill=RED_DK)
-        # footer: region · status left, source right
-        f_f = F(SANS_B, 8)
-        d.text((x + 8, y_bot - 14),
-               f"{hro['region']} · {hro['status']}", font=f_f, fill=RED)
-        f_s = F(SANS, 8)
-        sw = d.textlength(hro["src"], font=f_s)
-        d.text((x + w - 8 - sw, y_bot - 14), hro["src"], font=f_s, fill=MUTED)
-
-    # ---- medium heroes (6 columns)
-    for i, hro in enumerate(MED):
-        x = 18 + i * 166
-        w = 158
-        y_top, y_bot = 406, 594
-        d.rectangle([x, y_top, x + w, y_bot], fill=PAPER, outline=NAVY, width=2)
-        art = ART[hro["art"]](w - 4, 96)
-        img.paste(art, (x + 2, y_top + 2), art)
-        # data chip top-right of the illustration
-        f_c = F(SANS_B, 9)
-        cw = int(d.textlength(hro["badge"], font=f_c) + 12)
-        chip(d, x + w - 4 - cw, y_top + 6, hro["badge"])
-        # small number badge (r=11) top-left
-        r = 11
-        cx, cy = x + 14, y_top + 16
-        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=RED,
-                  outline=(255, 255, 255), width=2)
-        f_n = F(SANS_B, 11)
-        t = str(hro["num"])
-        d.text((cx - d.textlength(t, font=f_n) / 2, cy - 6), t, font=f_n,
-               fill=(255, 255, 255))
-        # headline (2 lines)
-        f_head = fit_font(d, hro["head"], SANS_B, 11, w - 12, min_size=10)
-        draw_wrapped(d, x + 6, y_top + 102, hro["head"], f_head, NAVY,
-                     w - 12, 2, 13)
-        # body (3 lines)
-        f_body = F(SANS, 9)
-        draw_wrapped(d, x + 6, y_top + 130, hro["body"], f_body, INK_SOFT,
-                     w - 12, 3, 11)
-        # footer: region · status / source on two lines
-        f_f = F(SANS_B, 8)
-        d.text((x + 6, y_bot - 22),
-               f"{hro['region']} · {hro['status']}", font=f_f, fill=RED)
-        f_s = F(SANS, 8)
-        d.text((x + 6, y_bot - 11), hro["src"], font=f_s, fill=MUTED)
-
-    # ---- map (full width)
-    d.text((16, 598), "WHERE IT HAPPENED", font=F(SANS_B, 12), fill=NAVY)
-    f_mn = F(SANS_B, 9)
-    mn = "28 NUMBERED PLACES"
-    d.text((1008 - d.textlength(mn, font=f_mn), 600), mn, font=f_mn, fill=MUTED)
-    d.rectangle([16, 614, 1008, 740], outline=NAVY, width=2)
-    draw_map(d, 17, 615, 1007, 739)
-    f_idx = F(SANS, 9)
-    for j, ln in enumerate(REGION_INDEX):
-        d.text((16, 744 + j * 11), ln, font=f_idx, fill=NAVY)
-    d.text((16, 766), HERO_PLACES, font=f_idx, fill=MUTED)
-
-    # ---- ALSO list (3 columns x 13 rows)
-    d.text((16, 782), "ALSO ON 25 NOVEMBER", font=F(SANS_B, 12), fill=NAVY)
-    f_num = F(SANS_B, 9)
-    for k, (num, head) in enumerate(ALSO):
-        col, row = k // 13, k % 13
-        x = 16 + col * 332
-        y = 800 + row * 10
-        d.text((x, y), str(num), font=f_num, fill=RED)
-        f_h = fit_font(d, head, SANS, 9, 320 - 22, min_size=8)
-        d.text((x + 20, y), head, font=f_h, fill=NAVY)
-
-    # ---- DATE CHECK
-    d.rectangle([16, 934, 20, 962], fill=RED)
-    f_dc = fit_font(d, DATE_CHECK, SANS, 9, 972, min_size=8)
-    draw_wrapped(d, 26, 934, DATE_CHECK, f_dc, NAVY, 972, 2, 12)
-
-    # ---- footer
-    d.line([16, 968, 1008, 968], fill=NAVY, width=2)
-    d.line([16, 971, 1008, 971], fill=NAVY, width=1)
-    f_g = F(SANS_B, 9)
-    center(d, W // 2, 976, FOOTER_GUARANTEE, f_g, NAVY)
-    f_s2 = F(SANS, 8)
-    center(d, W // 2, 990, FOOTER_SOURCES, f_s2, MUTED)
-
+    d.rectangle([6, 6, W - 7, H - 7], outline=NAVY, width=2)
+    y = 8
+    y = draw_topbar(d, y) + 2
+    y = draw_masthead(d, y) + 2
+    y = draw_subhead(d, y) + 2
+    y = draw_chips(d, y) + 2
+    y = draw_fields(d, y) + 2
+    y = draw_numbers(d, y) + 2
+    y = draw_utc(d, y) + 2
+    # heroes
+    hw = int((CW - 18) / 3)
+    for i, hero in enumerate(BIG):
+        draw_hero(d, img, MX + i * (hw + 9), y, hw, 258, hero)
+    y += 258 + 2
+    # mediums: 2 rows x 6
+    mw = int((CW - 30) / 6)
+    for r in range(2):
+        for c in range(6):
+            m = MED[r * 6 + c]
+            draw_medium(d, img, MX + c * (mw + 6), y, mw, 148, m)
+        y += 148 + 2
+    y = draw_bottom(d, y, 164) + 2
+    y = draw_datecheck(d, y, 34) + 2
+    y = draw_footer(d, y)
+    print("final y =", y, "of", H)
+    assert y <= H, "OVERFLOW by %d px" % (y - H)
     img.save(OUT, "PNG", optimize=True)
-    return OUT
-
+    print("saved", OUT, os.path.getsize(OUT), "bytes")
 
 if __name__ == "__main__":
-    import hashlib
-    p = build()
-    data = open(p, "rb").read()
-    im = Image.open(p)
-    print(f"saved {p}")
-    print(f"size {im.size} bytes {len(data)} sha256 "
-          f"{hashlib.sha256(data).hexdigest()}")
+    build()
